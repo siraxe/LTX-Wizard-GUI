@@ -198,7 +198,6 @@ def build_convert_lora_section(page, file_picker_input, file_picker_output):
 
 def get_tools_tab_content(page: ft.Page):
     """Entrypoint for the Tools tab content. Builds and returns the tab's UI container."""
-    print("--- get_tools_tab_content in tab_tools_view.py CALLED ---")
     page_controls = []
 
     # File pickers (must be added to page.overlay)

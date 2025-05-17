@@ -14,7 +14,7 @@ def create_about_content(page: ft.Page) -> ft.Column:
             ft.Divider(),
             ft.Text("This is work in progress report any major issues here:"),
             ft.Markdown(
-                "https://github.com/Lightricks/LTX-Video-Trainer",
+                "https://github.com/siraxe/LTX-Wizard-GUI",
                 selectable=True,
                 extension_set="gitHubWeb", # Keeping user's original casing
                 on_tap_link=lambda e: page.launch_url(e.data),

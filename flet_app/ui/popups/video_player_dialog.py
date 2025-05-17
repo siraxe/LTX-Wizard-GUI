@@ -1,8 +1,8 @@
 import flet as ft
 import os
 import json
-from ui._styles import create_textfield, create_styled_button, VIDEO_PLAYER_DIALOG_WIDTH, VIDEO_PLAYER_DIALOG_HEIGHT # Added video player dimensions
-from flet_video.video import Video, VideoMedia # Added Video and VideoMedia
+from ui._styles import create_textfield, create_styled_button, VIDEO_PLAYER_DIALOG_WIDTH, VIDEO_PLAYER_DIALOG_HEIGHT
+from flet_video.video import Video, VideoMedia
 
 # --- Data/Utility Helper Functions ---
 
@@ -94,6 +94,7 @@ _active_message_container_instance = None
 _active_on_caption_updated_callback = None
 _current_video_list_for_dialog = []
 _current_video_path_for_dialog = ""
+_last_video_loading_path = ""
 
 
 # --- GUI-Building Functions ---
@@ -135,11 +136,17 @@ def build_update_button(on_click) -> ft.Control:
 def update_video_player_source(video_player: Video, new_video_path: str):
     """Updates the video player's source to the new video path."""
     video_player.stop()
+    # Clear existing playlist items
     while video_player.playlist:
         video_player.playlist_remove(0)
-    video_player.stop()
+    # Add the new video
     video_player.playlist_add(VideoMedia(resource=new_video_path))
-    video_player.jump_to(0)
+
+    # Ensure the control updates its visual representation
+    if video_player.page:
+        video_player.update()
+
+    video_player.jump_to(0) # Start from the beginning
     video_player.play()
 
 def update_dialog_title(page: ft.Page, new_video_path: str):
@@ -150,32 +157,73 @@ def update_dialog_title(page: ft.Page, new_video_path: str):
             page.base_dialog.title_text_control.update()
 
 def update_caption_and_message(video_path: str, caption_field: ft.TextField, message_container: ft.Container):
-    """Loads and updates the caption field and message container for the given video."""
+    """
+    Loads and updates the caption field and message container for the given video.
+    """
     caption_value, message_control = load_caption_for_video(video_path)
     caption_field.value = caption_value
     message_container.content = message_control
+
 # --- End GUI-Building Functions ---
 
 # --- Dialog Logic and Event Handlers ---
+
 def switch_video_in_dialog(page: ft.Page, new_video_offset: int):
     """
     Switches the dialog to show a different video (prev/next) and updates all relevant controls.
+    Loads the new video player in a background thread to prevent UI freezing.
     """
     global _active_video_player_instance, _active_caption_field_instance, _active_message_container_instance
     global _current_video_list_for_dialog, _current_video_path_for_dialog, _active_on_caption_updated_callback
+    global _last_video_loading_path
+
     new_video_path = get_next_video_path(_current_video_list_for_dialog, _current_video_path_for_dialog, new_video_offset)
-    if not new_video_path:
+    if not new_video_path or new_video_path == _current_video_path_for_dialog:
         return
+
     _current_video_path_for_dialog = new_video_path
     update_dialog_title(page, new_video_path)
-    if _active_video_player_instance:
-        update_video_player_source(_active_video_player_instance, new_video_path)
-        if page:
-            page.update()
+    _last_video_loading_path = new_video_path
+
     if _active_caption_field_instance and _active_message_container_instance:
         update_caption_and_message(new_video_path, _active_caption_field_instance, _active_message_container_instance)
+
+    def load_and_replace_video():
+        global _active_video_player_instance
+        global _current_video_path_for_dialog, _last_video_loading_path
+
+        if _current_video_path_for_dialog != _last_video_loading_path:
+            return
+
+        if _active_video_player_instance:
+            try:
+                _active_video_player_instance.stop()
+                while _active_video_player_instance.playlist:
+                    _active_video_player_instance.playlist_remove(0)
+                _active_video_player_instance.playlist_add(VideoMedia(resource=new_video_path))
+                _active_video_player_instance.jump_to(0)
+                _active_video_player_instance.play()
+
+                if _active_video_player_instance.page:
+                     _active_video_player_instance.update()
+                if page:
+                    page.update()
+
+            except Exception as e:
+                print(f"Error updating video player in background thread: {e}")
+                if page:
+                    def show_error_snackbar(error_message):
+                        if page.snack_bar is None:
+                            page.snack_bar = ft.SnackBar(ft.Text(f"Error loading video: {error_message}"), open=True)
+                        else:
+                            page.snack_bar.content = ft.Text(f"Error loading video: {error_message}")
+                            page.snack_bar.open = True
+                        page.update()
+
+                    page.run_sync(lambda: show_error_snackbar(e))
+
     if page:
-        page.update()
+        page.run_thread(load_and_replace_video)
 
 def handle_update_caption_click(page: ft.Page):
     """
@@ -184,7 +232,6 @@ def handle_update_caption_click(page: ft.Page):
     global _active_caption_field_instance, _active_message_container_instance, _active_on_caption_updated_callback, _current_video_path_for_dialog
     new_caption = _active_caption_field_instance.value.strip()
     save_caption_for_video(page, _current_video_path_for_dialog, new_caption, _active_on_caption_updated_callback)
-    # Refresh the caption and message container to remove red text if caption is present
     if _active_caption_field_instance and _active_message_container_instance:
         update_caption_and_message(_current_video_path_for_dialog, _active_caption_field_instance, _active_message_container_instance)
     if page:
@@ -201,10 +248,13 @@ def handle_caption_dialog_keyboard(page: ft.Page, e: ft.KeyboardEvent):
             page.base_dialog.hide_dialog()
             return
     if not caption_field_is_focused:
-        if e.key == "[": switch_video_in_dialog(page, -1)
-        elif e.key == "]": switch_video_in_dialog(page, 1)
+        if e.key == "[":
+            switch_video_in_dialog(page, -1)
+        elif e.key == "]":
+            switch_video_in_dialog(page, 1)
     if e.ctrl and e.key.lower() == "s" and _active_caption_field_instance:
         handle_update_caption_click(page)
+
 # --- Main Dialog Construction ---
 def create_video_player_with_captions_content(page: ft.Page, video_path: str, video_list: list, on_caption_updated_callback: callable = None) -> tuple[ft.Column, list[ft.Control]]:
     """
@@ -212,24 +262,27 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
     """
     global _active_video_player_instance, _active_caption_field_instance, _active_message_container_instance
     global _current_video_list_for_dialog, _current_video_path_for_dialog, _active_on_caption_updated_callback
+    global _last_video_loading_path
+
     _current_video_path_for_dialog = video_path
     _current_video_list_for_dialog = video_list
     _active_on_caption_updated_callback = on_caption_updated_callback
-    # Navigation controls
+    _last_video_loading_path = video_path
+
     nav_controls = build_navigation_controls(
         lambda e: switch_video_in_dialog(page, -1),
         lambda e: switch_video_in_dialog(page, 1)
     )
-    # Video player
+
     _active_video_player_instance = build_video_player(video_path)
-    # Caption field
+
     caption_value, message_control = load_caption_for_video(video_path)
     _active_caption_field_instance = build_caption_field(initial_value=caption_value)
-    # Message container
+
     _active_message_container_instance = build_message_container(content=message_control)
-    # Update button
+
     update_button = build_update_button(on_click=lambda e: handle_update_caption_click(page))
-    # Layout
+
     content_column = ft.Column(
         controls=[
             ft.Row([_active_video_player_instance], alignment=ft.MainAxisAlignment.CENTER),
@@ -253,17 +306,23 @@ def open_video_captions_dialog(page: ft.Page, video_path: str, video_list=None, 
         return
     if video_list is None:
         video_list = [video_path]
+
     video_filename = os.path.basename(video_path)
     dialog_title_text = f"{video_filename}"
+
     main_content_ui, nav_prefix_controls = create_video_player_with_captions_content(page, video_path, video_list, on_caption_updated_callback)
+
     desired_width = VIDEO_PLAYER_DIALOG_WIDTH
+
     if hasattr(page, 'base_dialog') and page.base_dialog:
         page.base_dialog.show_dialog(content=main_content_ui, title=dialog_title_text, new_width=desired_width, title_prefix_controls=nav_prefix_controls)
     else:
         print("Error: Base dialog (PopupDialogBase) not found on page.")
         fallback_alert = ft.AlertDialog(title=ft.Text(dialog_title_text), content=main_content_ui, actions=[ft.TextButton("Close", on_click=lambda e: fallback_alert.close())])
         page.dialog = fallback_alert; fallback_alert.open = True; page.update()
+
     def caption_dialog_keyboard_handler(e: ft.KeyboardEvent):
         handle_caption_dialog_keyboard(page, e)
+
     page.video_dialog_hotkey_handler = caption_dialog_keyboard_handler
     page.video_dialog_open = True

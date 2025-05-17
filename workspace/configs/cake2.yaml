@@ -1,7 +1,8 @@
 model:
-  model_source: "LTXV_13B_097_DEV"
+  model_source: "LTXV_13B_097_DEV_FP8"
   training_mode: "lora"
   load_checkpoint: null
+  blocks_to_swap: 0
 lora:
   rank: 128
   alpha: 128
@@ -24,7 +25,7 @@ optimization:
   first_frame_conditioning_p: 0.5
 acceleration:
   mixed_precision_mode: "bf16"
-  quantization: "fp8-quanto"
+  quantization: "int8-quanto"
   load_text_encoder_in_8bit: true
   compile_with_inductor: false
   compilation_mode: "reduce-overhead"
@@ -37,7 +38,10 @@ validation:
   - "CAKEIFY a person using a knife to cut a cake shaped like potted plant"
   - "CAKEIFY a person using a knife to cut a cake shaped like a jar of Nutella"
   negative_prompt: "worst quality, inconsistent motion, blurry, jittery, distorted"
-  video_dims: [512, 512, 49]
+  video_dims:
+  - 512
+  - 512
+  - 49
   seed: 42
   inference_steps: 25
   interval: 250
@@ -51,3 +55,6 @@ flow_matching:
   timestep_sampling_params: {}
 seed: 42
 output_dir: "workspace/output/cakeify_lora_13b"
+misc:
+  sampling_enabled: true
+  match_enabled: true

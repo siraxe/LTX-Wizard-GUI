@@ -21,8 +21,10 @@ def get_training_config_page_content():
                             "Model Source",
                             "LTXV_13B_097_DEV",
                             {
-                                "LTXV_13B_097_DISTILLED": "LTXV_13B_097_DISTILLED",
                                 "LTXV_13B_097_DEV": "LTXV_13B_097_DEV",
+                                "LTXV_13B_097_DEV_FP8": "LTXV_13B_097_DEV_FP8",
+                                "LTXV_13B_097_DISTILLED": "LTXV_13B_097_DISTILLED",
+                                "LTXV_13B_097_DISTILLED_FP8": "LTXV_13B_097_DISTILLED_FP8",
                                 "LTXV_2B_0.9.6_DEV": "LTXV_2B_0.9.6_DEV",
                                 "LTXV_2B_0.9.5": "LTXV_2B_0.9.5",
                                 "LTXV_2B_0.9.1": "LTXV_2B_0.9.1",
@@ -38,8 +40,11 @@ def get_training_config_page_content():
                             },col=4, expand=True
                         ),
                     ]),
-                    create_textfield("Custom Model Path (if not in dropdown)", None, hint_text="HF repo or local path", col=4, expand=True),
                     create_textfield("Output Directory", "workspace/output/cakeify_lora_13b", col=3, expand=True),
+                    ft.ResponsiveRow(controls=[
+                        create_textfield("Block to swap", 0, col=3,  hint_text="Max 47 , need at least 1 in vram",expand=True),
+                        create_textfield("Custom Model Path (if not in dropdown)", None, hint_text="HF repo or local path", col=9, expand=True),
+                    ]),
                     ft.ResponsiveRow(controls=[
                         create_textfield("Seed (General)", 42, col=3, expand=True),
                         create_textfield("Last Checkpoint", None, hint_text="Path to file/directory to resume from. If directory, latest checkpoint will be used", col=9, expand=True),
@@ -126,7 +131,7 @@ def get_training_config_page_content():
                         "Quantization",
                         "fp8-quanto",
                         {
-                            "": "null",
+                            "no_change": "no_change",
                             "int8-quanto": "int8-quanto",
                             "int4-quanto": "int4-quanto",
                             "int2-quanto": "int2-quanto",

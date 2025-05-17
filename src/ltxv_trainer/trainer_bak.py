@@ -7,7 +7,6 @@ from functools import partial
 from pathlib import Path
 from typing import Callable, Optional
 from unittest.mock import MagicMock
-import gc # Ensure gc is imported
 
 import torch
 from accelerate import Accelerator
@@ -51,8 +50,6 @@ from ltxv_trainer.model_loader import load_ltxv_components
 from ltxv_trainer.quantization import quantize_model
 from ltxv_trainer.timestep_samplers import SAMPLERS
 from ltxv_trainer.utils import get_gpu_memory_gb, open_image_as_srgb
-# Import for block swapping
-from ltxv_trainer.blockswap_utils import blockswap_transformer_blocks
 
 
 
@@ -88,74 +85,11 @@ class LtxvTrainer:
         self._setup_accelerator()
         self._load_models()
         self._compile_transformer()
-        self._setup_block_swap() # Call after model loading and compilation
         self._collect_trainable_params()
         self._load_checkpoint()
         self._dataset = None
         self._global_step = -1
         self._checkpoint_paths = []
-
-    def _setup_block_swap(self) -> None:
-        """
-        Sets up block swapping for the transformer model if configured.
-        Moves a specified number of transformer blocks (and optionally txt_in, img_in)
-        to CPU and patches their forward methods for cross-device execution.
-        """
-        if not hasattr(self._config.model, "blocks_to_swap") or \
-           self._config.model.blocks_to_swap is None or \
-           self._config.model.blocks_to_swap == 0:
-            logger.info("Block swapping for training is not configured or set to 0. Skipping.")
-            return
-
-        num_to_swap = self._config.model.blocks_to_swap
-        transformer_model = self._accelerator.unwrap_model(self._transformer) # Get the raw model
-        max_blocks = len(transformer_model.transformer_blocks)
-
-        if not (0 < num_to_swap <= max_blocks):
-            logger.error(
-                f"Invalid 'blocks_to_swap': {num_to_swap}. "
-                f"Must be > 0 and <= total blocks ({max_blocks}). Disabling block swap."
-            )
-            return
-
-        logger.info(f"Requesting to swap {num_to_swap} transformer blocks to CPU for training.")
-        
-        # The active device is where non-swapped parts should reside.
-        active_device = self._accelerator.device 
-        offload_device = "cpu" # Blocks are offloaded to CPU
-
-        logger.info(f"Applying blockswap: {num_to_swap} blocks to '{offload_device}'. Active blocks on '{active_device}'.")
-        logger.info("Also offloading txt_in and img_in layers to CPU.")
-
-        # blockswap_transformer_blocks modifies the model in-place
-        blockswap_transformer_blocks(
-            model=transformer_model, # Pass the unwrapped model
-            transformer_blocks_to_swap=num_to_swap,
-            device=offload_device, # Target for offloaded blocks
-            offload_txt_in=True,   # Offload text projection
-            offload_img_in=True    # Offload image projection
-        )
-        
-        # Log device info for verification
-        logger.info("Block swap applied. Verifying device placement of key components...")
-        try:
-            if transformer_model.transformer_blocks:
-                logger.info(f"  Device of first transformer block (idx 0): {next(transformer_model.transformer_blocks[0].parameters()).device}")
-                logger.info(f"  Device of {num_to_swap}-th block from end (idx {max_blocks - num_to_swap}): {next(transformer_model.transformer_blocks[max_blocks - num_to_swap].parameters()).device}")
-                if num_to_swap < max_blocks: # If not all blocks are swapped
-                     logger.info(f"  Device of block after swapped portion (idx {max_blocks - num_to_swap -1}): {next(transformer_model.transformer_blocks[max_blocks - num_to_swap -1].parameters()).device}")
-                logger.info(f"  Device of last transformer block (idx {max_blocks - 1}): {next(transformer_model.transformer_blocks[max_blocks - 1].parameters()).device}")
-            if hasattr(transformer_model, "txt_in") and list(transformer_model.txt_in.parameters()):
-                logger.info(f"  Device of txt_in: {next(transformer_model.txt_in.parameters()).device}")
-            if hasattr(transformer_model, "img_in") and list(transformer_model.img_in.parameters()):
-                logger.info(f"  Device of img_in: {next(transformer_model.img_in.parameters()).device}")
-        except Exception as e:
-            logger.warning(f"Could not fully verify block placement after swap: {e}")
-
-        if active_device.type == "cuda":
-            torch.cuda.empty_cache()
-        gc.collect()
-        logger.info("Block swapping setup complete.")
 
     def train(  # noqa: PLR0912, PLR0915
         self,

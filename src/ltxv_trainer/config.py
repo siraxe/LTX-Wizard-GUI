@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -29,6 +29,8 @@ class ModelConfig(ConfigBaseModel):
         description="Path to a checkpoint file or directory to load from. "
         "If a directory is provided, the latest checkpoint will be used.",
     )
+
+    blocks_to_swap: Optional[int] = None
 
     # noinspection PyNestedDecorators
     @field_validator("model_source", mode="before")

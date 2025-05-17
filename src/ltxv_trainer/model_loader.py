@@ -33,7 +33,9 @@ class LtxvModelVersion(str, Enum):
     LTXV_2B_096_DEV = "LTXV_2B_0.9.6_DEV"
     LTXV_2B_096_DISTILLED = "LTXV_2B_0.9.6_DISTILLED"
     LTXV_13B_097_DEV = "LTXV_13B_097_DEV"
+    LTXV_13B_097_DEV_FP8 = "LTXV_13B_097_DEV_FP8"
     LTXV_13B_097_DISTILLED = "LTXV_13B_097_DISTILLED"
+    LTXV_13B_097_DISTILLED_FP8 = "LTXV_13B_097_DISTILLED_FP8"
 
     def __str__(self) -> str:
         """Return the version string."""
@@ -60,8 +62,12 @@ class LtxvModelVersion(str, Enum):
                 raise ValueError("LTXV_2B_096_DISTILLED does not have a HuggingFace repo")
             case LtxvModelVersion.LTXV_13B_097_DEV:
                 raise ValueError("LTXV_13B_097_DEV does not have a HuggingFace repo")
+            case LtxvModelVersion.LTXV_13B_097_DEV_FP8:
+                raise ValueError("LTXV_13B_097_DEV_FP8 does not have a HuggingFace repo")
             case LtxvModelVersion.LTXV_13B_097_DISTILLED:
                 raise ValueError("LTXV_13B_097_DISTILLED does not have a HuggingFace repo")
+            case LtxvModelVersion.LTXV_13B_097_DISTILLED_FP8:
+                raise ValueError("LTXV_13B_097_DISTILLED_FP8 does not have a HuggingFace repo")
         raise ValueError(f"Unknown version: {self}")
 
     @property
@@ -80,8 +86,12 @@ class LtxvModelVersion(str, Enum):
                 return "https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-2b-0.9.6-distilled-04-25.safetensors"
             case LtxvModelVersion.LTXV_13B_097_DEV:
                 return "https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-13b-0.9.7-dev.safetensors"
+            case LtxvModelVersion.LTXV_13B_097_DEV_FP8:
+                return "https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-13b-0.9.7-dev-fp8.safetensors"
             case LtxvModelVersion.LTXV_13B_097_DISTILLED:
                 return "https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-13b-0.9.7-distilled.safetensors"
+            case LtxvModelVersion.LTXV_13B_097_DISTILLED_FP8:
+                return "https://huggingface.co/Lightricks/LTX-Video/blob/main/ltxv-13b-0.9.7-distilled-fp8.safetensors"
         raise ValueError(f"Unknown version: {self}")
 
 
@@ -238,7 +248,9 @@ def load_vae(
             LtxvModelVersion.LTXV_2B_096_DEV,
             LtxvModelVersion.LTXV_2B_096_DISTILLED,
             LtxvModelVersion.LTXV_13B_097_DEV,
+            LtxvModelVersion.LTXV_13B_097_DEV_FP8,
             LtxvModelVersion.LTXV_13B_097_DISTILLED,
+            LtxvModelVersion.LTXV_13B_097_DISTILLED_FP8,
         ):
             repo_id_to_load = LtxvModelVersion.LTXV_2B_095.hf_repo
             subfolder = "vae"
@@ -277,24 +289,28 @@ def load_vae(
             target_local_file_path = target_local_file_dir / actual_filename_on_hub
             target_local_file_dir.mkdir(parents=True, exist_ok=True)
 
+            if not target_local_file_path.exists():
+                try:
+                    hf_hub_download(
+                        repo_id=repo_id_of_file,
+                        filename=actual_filename_on_hub,
+                        local_dir=target_local_file_dir, # hf_hub_download puts the file directly in local_dir
+                        local_dir_use_symlinks=False,
+                    )
+                except Exception as e:
+                    raise IOError(f"Failed to download VAE {actual_filename_on_hub} from repo {repo_id_of_file} for version {source}: {e}") from e
+
             try:
                 return AutoencoderKLLTXVideo.from_single_file(
-                    target_local_file_path,
+                    str(target_local_file_path),
                     torch_dtype=dtype,
                     local_files_only=True,
                 )
-            except (OSError, HFValidationError, HfHubHTTPError): 
-                hf_hub_download(
-                    repo_id=repo_id_of_file,
-                    filename=actual_filename_on_hub,
-                    local_dir=target_local_file_dir, # hf_hub_download puts the file directly in local_dir
-                    local_dir_use_symlinks=False,
-                )
-                return AutoencoderKLLTXVideo.from_single_file(
-                    target_local_file_path, 
-                    torch_dtype=dtype,
-                    local_files_only=True,
-                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to load VAE from local file {target_local_file_path} "
+                    f"(version {source}, dtype: {dtype}). File was expected to exist. Original error: {e}"
+                ) from e
 
     elif isinstance(source, (str, Path)):
         source_str = str(source)
@@ -339,26 +355,28 @@ def load_vae(
             target_local_file_path = target_local_file_dir / actual_filename_on_hub
             target_local_file_dir.mkdir(parents=True, exist_ok=True)
 
+            if not target_local_file_path.exists():
+                try:
+                    hf_hub_download(
+                        repo_id=repo_id_of_file,
+                        filename=actual_filename_on_hub,
+                        local_dir=target_local_file_dir,
+                        local_dir_use_symlinks=False,
+                    )
+                except Exception as e:
+                    raise IOError(f"Failed to download VAE {actual_filename_on_hub} from repo {repo_id_of_file} for version {source}: {e}") from e
+
             try:
                 return AutoencoderKLLTXVideo.from_single_file(
-                    target_local_file_path,
+                    str(target_local_file_path),
                     torch_dtype=dtype,
                     local_files_only=True,
                 )
-            except (OSError, HFValidationError, HfHubHTTPError):
-                if not repo_id_of_file: 
-                    raise ValueError(f"Cannot automatically download VAE from non-HuggingFace URL: {file_url} and not found locally.")
-                hf_hub_download(
-                    repo_id=repo_id_of_file,
-                    filename=actual_filename_on_hub,
-                    local_dir=target_local_file_dir,
-                    local_dir_use_symlinks=False,
-                )
-                return AutoencoderKLLTXVideo.from_single_file(
-                    target_local_file_path,
-                    torch_dtype=dtype,
-                    local_files_only=True,
-                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to load VAE from local file {target_local_file_path} "
+                    f"(version {source}, dtype: {dtype}). File was expected to exist. Original error: {e}"
+                ) from e
 
     raise ValueError(f"Invalid model source for VAE: {source}")
 
@@ -401,6 +419,8 @@ def load_transformer(
         if source in (
             LtxvModelVersion.LTXV_13B_097_DEV,
             LtxvModelVersion.LTXV_13B_097_DISTILLED,
+            LtxvModelVersion.LTXV_13B_097_DEV_FP8,
+            LtxvModelVersion.LTXV_13B_097_DISTILLED_FP8,
         ):
             if not target_local_file_path.exists(): # Check if file needs download
                  try:
@@ -411,28 +431,32 @@ def load_transformer(
                         local_dir_use_symlinks=False,
                     )
                  except Exception as e:
-                    raise IOError(f"Failed to download {actual_filename_on_hub} for LTXV_13B_097_DEV from {repo_id_of_file}: {e}") from e
+                    raise IOError(f"Failed to download {actual_filename_on_hub} for {source} from {repo_id_of_file}: {e}") from e
             return _load_ltxv_13b_transformer(str(target_local_file_path), dtype=dtype)
 
         # For other LtxvModelVersion transformers (single .safetensors file)
+        if not target_local_file_path.exists():
+            try:
+                hf_hub_download(
+                    repo_id=repo_id_of_file,
+                    filename=actual_filename_on_hub,
+                    local_dir=target_local_file_dir,
+                    local_dir_use_symlinks=False,
+                )
+            except Exception as e:
+                raise IOError(f"Failed to download transformer {actual_filename_on_hub} from repo {repo_id_of_file} for version {source}: {e}") from e
+        
         try:
             return LTXVideoTransformer3DModel.from_single_file(
-                target_local_file_path,
+                str(target_local_file_path),
                 torch_dtype=dtype,
                 local_files_only=True,
             )
-        except (OSError, HFValidationError, HfHubHTTPError):
-            hf_hub_download(
-                repo_id=repo_id_of_file,
-                filename=actual_filename_on_hub,
-                local_dir=target_local_file_dir,
-                local_dir_use_symlinks=False,
-            )
-            return LTXVideoTransformer3DModel.from_single_file(
-                target_local_file_path,
-                torch_dtype=dtype,
-                local_files_only=True,
-            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load transformer from local file {target_local_file_path} "
+                f"(version {source}, dtype: {dtype}). File was expected to exist. Original error: {e}"
+            ) from e
 
     elif isinstance(source, (str, Path)):
         source_str = str(source)
@@ -464,7 +488,7 @@ def load_transformer(
         elif _is_safetensors_url(source_str) or Path(source_str).is_file(): 
             is_local_file = Path(source_str).is_file()
             if is_local_file:
-                return LTXVideoTransformer3DModel.from_single_file(source_str, torch_dtype=dtype)
+                return LTXVideoTransformer3DModel.from_single_file(str(source_str), torch_dtype=dtype)
 
             file_url = source_str
             filename = file_url.split("/")[-1]
@@ -478,26 +502,28 @@ def load_transformer(
             target_local_file_path = target_local_file_dir / actual_filename_on_hub
             target_local_file_dir.mkdir(parents=True, exist_ok=True)
 
+            if not target_local_file_path.exists():
+                try:
+                    hf_hub_download(
+                        repo_id=repo_id_of_file,
+                        filename=actual_filename_on_hub,
+                        local_dir=target_local_file_dir,
+                        local_dir_use_symlinks=False,
+                    )
+                except Exception as e:
+                    raise IOError(f"Failed to download Transformer {actual_filename_on_hub} from repo {repo_id_of_file} for version {source}: {e}") from e
+
             try:
                 return LTXVideoTransformer3DModel.from_single_file(
-                    target_local_file_path,
+                    str(target_local_file_path),
                     torch_dtype=dtype,
                     local_files_only=True,
                 )
-            except (OSError, HFValidationError, HfHubHTTPError):
-                if not repo_id_of_file:
-                     raise ValueError(f"Cannot automatically download Transformer from non-HuggingFace URL: {file_url} and not found locally.")
-                hf_hub_download(
-                    repo_id=repo_id_of_file,
-                    filename=actual_filename_on_hub,
-                    local_dir=target_local_file_dir,
-                    local_dir_use_symlinks=False,
-                )
-                return LTXVideoTransformer3DModel.from_single_file(
-                    target_local_file_path,
-                    torch_dtype=dtype,
-                    local_files_only=True,
-                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to load transformer from local file {target_local_file_path} "
+                    f"(version {source}, dtype: {dtype}). File was expected to exist. Original error: {e}"
+                ) from e
 
     raise ValueError(f"Invalid model source for Transformer: {source}")
 

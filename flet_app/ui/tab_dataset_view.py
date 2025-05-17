@@ -163,7 +163,9 @@ MODEL_NAME_CHOICES = [
     "LTXV_2B_0.9.6_DEV",
     "LTXV_2B_0.9.6_DISTILLED",
     "LTXV_13B_097_DEV",
+    "LTXV_13B_097_DEV_FP8",
     "LTXV_13B_097_DISTILLED",
+    "LTXV_13B_097_DISTILLED_FP8",
 ]
 
 model_name_dropdown = create_dropdown(
@@ -336,13 +338,23 @@ def on_preprocess_dataset_click(e: ft.ControlEvent):
                 raise ValueError("Unrecognized format")
         except Exception as ex_parse:
             if e.page and e.page.client_storage:
-                e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error parsing Bucket Size '{raw_bucket_str_val}': {ex_parse}"), open=True)
+                error_msg = f"Error parsing Bucket Size '{raw_bucket_str_val}': {ex_parse}"
+                e.page.snack_bar = ft.SnackBar(content=ft.Text(error_msg), open=True)
+                processed_output_field.value = error_msg
+                processed_output_field.visible = True
+                set_bottom_app_bar_height()
+                processed_output_field.update()
                 e.page.update()
             return
     error_messages = validate_bucket_values(W_val, H_val, F_val)
     if error_messages:
         if e.page and e.page.client_storage:
-            e.page.snack_bar = ft.SnackBar(content=ft.Text("Bucket Size errors: " + " ".join(error_messages)), open=True)
+            error_msg = "Bucket Size errors: " + " ".join(error_messages)
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(error_msg), open=True)
+            processed_output_field.value = error_msg
+            processed_output_field.visible = True
+            set_bottom_app_bar_height()
+            processed_output_field.update()
             e.page.update()
         return
     resolution_buckets_str = f"{W_val}x{H_val}x{F_val}"

@@ -1,0 +1,36 @@
+{
+    "owl.mp4": {
+        "width": 512,
+        "height": 512,
+        "frames": 50
+    },
+    "pika.mp4": {
+        "width": 512,
+        "height": 512,
+        "frames": 71
+    },
+    "sq.mp4": {
+        "width": 512,
+        "height": 512,
+        "frames": 70
+    },
+    "sq - Copy.mp4": {
+        "width": 512,
+        "height": 512,
+        "frames": 70
+    },
+    "pika - Copy.mp4": {
+        "width": 512,
+        "height": 512,
+        "frames": 71
+    },
+    "bucket_model": {
+        "size": [
+            512,
+            512,
+            49
+        ],
+        "type": "LTXV_13B_097_DEV",
+        "trigger_word": ""
+    }
+}

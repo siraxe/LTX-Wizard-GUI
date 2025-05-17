@@ -185,7 +185,6 @@ def get_training_tab_content(page: ft.Page):
     """
     Entry point for building the Training tab content. Sets up navigation, content, and event handlers.
     """
-    print("get_training_tab_content loaded")
     page.snack_bar = ft.SnackBar(content=ft.Text("Training tab loaded! (debug)"), open=True)
     page.update()
 

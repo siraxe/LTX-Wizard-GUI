@@ -74,11 +74,24 @@ class TopBarUtils:
             interval_validation_final = interval_checkpoints
         else:
             interval_validation_final = interval_validation
+        # --- Write null to YAML if interval is 0 ---
+        interval_for_yaml = None if interval_validation_final == 0 else interval_validation_final
+        # --- Logic for blocks_to_swap ---
+        blocks_to_swap_value_str = config.get('Block to swap')
+        blocks_to_swap_final = None # Default to None if not set or invalid
+        if blocks_to_swap_value_str is not None and str(blocks_to_swap_value_str).strip() != "":
+            try:
+                blocks_to_swap_final = int(blocks_to_swap_value_str)
+                if blocks_to_swap_final < 0:
+                    blocks_to_swap_final = 0
+            except ValueError:
+                blocks_to_swap_final = None
         yaml_dict = {
             'model': {
                 'model_source': config.get('Model Source'),
                 'training_mode': config.get('Training Mode'),
                 'load_checkpoint': config.get('Load Checkpoint') or None,
+                'blocks_to_swap': blocks_to_swap_final,
             },
             'lora': {
                 'rank': int(config.get('Rank', 128)),
@@ -115,7 +128,7 @@ class TopBarUtils:
                 'video_dims': eval(sampling.get('Video Dims', '[512, 512, 49]')),
                 'seed': int(sampling.get('Seed (Validation)', 42)),
                 'inference_steps': int(sampling.get('Inference Steps', 50)),
-                'interval': interval_validation_final,
+                'interval': interval_for_yaml,  # Use None for 0
                 'videos_per_prompt': int(sampling.get('Videos Per Prompt', 1)),
                 'guidance_scale': float(sampling.get('Guidance Scale', 3.5)),
             },
@@ -129,6 +142,10 @@ class TopBarUtils:
             },
             'seed': int(config.get('Seed (General)', 42)),
             'output_dir': config.get('Output Directory'),
+            'misc': {
+                'sampling_enabled': sampling_checkbox,
+                'match_enabled': match_checkbox,
+            }
         }
         for section in ['model', 'lora', 'optimization', 'acceleration', 'data', 'validation', 'checkpoints', 'flow_matching']:
             for k, v in yaml_dict[section].items():
@@ -307,6 +324,7 @@ class TopBarUtils:
             "model_source": "Model Source",
             "training_mode": "Training Mode",
             "load_checkpoint": "Load Checkpoint",
+            "blocks_to_swap": "Block to swap",
             "rank": "Rank",
             "alpha": "Alpha",
             "dropout": "Dropout",
@@ -353,6 +371,11 @@ class TopBarUtils:
                     key = "interval_checkpoints"
                 elif parent_key == "seed":
                     key = "seed_general"
+                # Handle misc section keys
+                elif parent_key == "misc" and k == "sampling_enabled":
+                    key = "Sampling" # Map to UI control label
+                elif parent_key == "misc" and k == "match_enabled":
+                    key = "Match" # Map to UI control label
                 if isinstance(v, dict):
                     flat.update(flatten_yaml(v, k))
                 else:
@@ -371,8 +394,24 @@ class TopBarUtils:
                 if v == label:
                     yaml_key = k
                     break
-            if yaml_key and yaml_key in flat:
+            # Check if the label matches the keys from the misc section
+            if label == "Sampling" and "Sampling" in flat:
+                 val = flat["Sampling"]
+                 if isinstance(control, ft.Checkbox):
+                    control.value = bool(val)
+                    if hasattr(control, '_Control__page') and control._Control__page is not None:
+                        control.update()
+            elif label == "Match" and "Match" in flat:
+                 val = flat["Match"]
+                 if isinstance(control, ft.Checkbox):
+                    control.value = bool(val)
+                    if hasattr(control, '_Control__page') and control._Control__page is not None:
+                        control.update()
+            elif yaml_key and yaml_key in flat:
                 val = flat[yaml_key]
+                # If loading interval and it's None, set UI to '0'
+                if yaml_key == "interval" and val is None:
+                    val = "0"
                 if isinstance(control, ft.TextField):
                     if isinstance(val, list):
                         control.value = ', '.join(str(x) for x in val)

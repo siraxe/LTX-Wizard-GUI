@@ -442,11 +442,11 @@ def main(
         help="Decode and save videos after encoding (for verification purposes)",
     ),
 ) -> None:
-    print(f"DEBUG: id_token argument received: {id_token}")
+    print(f" id_token argument received: {id_token}")
     if id_token:
         console.print(f"[bold yellow]LoRA trigger word[/] [cyan]{id_token}[/] [bold yellow]will be prepended to all captions[/]")
     else:
-        print("DEBUG: No id_token argument was passed.")
+        print(" No id_token argument was passed.")
     """Preprocess a video dataset by computing and saving latents and text embeddings.
 
     The dataset can be specified in two ways:
