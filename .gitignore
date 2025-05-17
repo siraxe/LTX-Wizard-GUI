@@ -27,3 +27,9 @@ configs/*.yaml
 !configs/ltxv_2b_lora_low_vram.yaml
 outputs
 *.mov
+
+
+# Ignore everything in the models directory
+models/*
+# Except for a .gitkeep file, to keep the directory
+!models/.gitkeep 
