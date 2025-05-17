@@ -24,18 +24,27 @@ class CaptionerType(str, Enum):
     LLAVA_NEXT_7B = "llava_next_7b"
 
 
-def create_captioner(captioner_type: CaptionerType, **kwargs) -> "MediaCaptioningModel":
+def create_captioner(
+    captioner_type: CaptionerType,
+    models_dir: Union[str, Path] = "models",  # Added models_dir
+    **kwargs,
+) -> "MediaCaptioningModel":
     """Factory function to create a video captioner.
 
     Args:
         captioner_type: The type of captioner to create
+        models_dir: The directory to store/load models from.
         **kwargs: Additional arguments to pass to the captioner constructor
 
     Returns:
         An instance of a MediaCaptioningModel
     """
     if captioner_type == CaptionerType.LLAVA_NEXT_7B:
-        return TransformersVlmCaptioner(model_id="llava-hf/LLaVA-NeXT-Video-7B-hf", **kwargs)
+        return TransformersVlmCaptioner(
+            model_id="llava-hf/LLaVA-NeXT-Video-7B-hf",
+            models_dir=models_dir,  # Pass models_dir
+            **kwargs,
+        )
     else:
         raise ValueError(f"Unsupported captioner type: {captioner_type}")
 
@@ -94,6 +103,7 @@ class TransformersVlmCaptioner(MediaCaptioningModel):
     def __init__(
         self,
         model_id: str = "llava-hf/LLaVA-NeXT-Video-7B-hf",
+        models_dir: Union[str, Path] = "models",  # Added models_dir with default
         device: str | torch.device = None,
         use_8bit: bool = False,
         vlm_instruction: str = DEFAULT_VLM_CAPTION_INSTRUCTION,
@@ -101,12 +111,16 @@ class TransformersVlmCaptioner(MediaCaptioningModel):
         """Initialize the captioner.
 
         Args:
-            model_id: HuggingFace model ID for LLaVA-NeXT-Video
+            model_id: HuggingFace model ID
+            models_dir: Directory to store/load HuggingFace models.
             device: torch.device to use for the model
+            use_8bit: Whether to load the model in 8-bit.
+            vlm_instruction: The instruction prompt for the VLM.
         """
         self.device = torch.device(device or "cuda" if torch.cuda.is_available() else "cpu")
         self.vlm_instruction = vlm_instruction
-        self._load_model(model_id, use_8bit=use_8bit)
+        self.models_dir = Path(models_dir)  # Store as Path object
+        self._load_model(model_id, use_8bit=use_8bit, models_dir=self.models_dir) # Pass models_dir
 
     def caption(
         self,
@@ -159,22 +173,66 @@ class TransformersVlmCaptioner(MediaCaptioningModel):
         caption = self._clean_raw_caption(caption_raw) if clean_caption else caption_raw
         return caption
 
-    def _load_model(self, model_id: str, use_8bit: bool) -> None:
+    def _load_model(self, model_id: str, use_8bit: bool, models_dir: Path) -> None:
+        model_name = model_id.split("/")[-1]
+        local_model_path = models_dir / model_name
+
         if model_id == "llava-hf/LLaVA-NeXT-Video-7B-hf":
             model_cls = LlavaNextVideoForConditionalGeneration
         else:
+            # For other models, ensure their specific class is used or AutoModelForConditionalGeneration
+            # For now, this follows the original logic for non-LLAVA IDs.
             model_cls = AutoModel
 
         quantization_config = BitsAndBytesConfig(load_in_8bit=True) if use_8bit else None
-        self.model = model_cls.from_pretrained(
-            model_id,
-            torch_dtype=torch.bfloat16,
-            low_cpu_mem_usage=True,
-            quantization_config=quantization_config,
-            device_map=self.device.type,
-        )
 
-        self.processor = AutoProcessor.from_pretrained(model_id)
+        # Attempt to load from local path first
+        if local_model_path.exists() and local_model_path.is_dir():
+            try:
+                print(f"Attempting to load model from local path: {local_model_path}")  # noqa: T201
+                self.model = model_cls.from_pretrained(
+                    local_model_path,
+                    torch_dtype=torch.bfloat16,
+                    low_cpu_mem_usage=True,
+                    quantization_config=quantization_config,
+                    device_map=self.device.type,
+                )
+                self.processor = AutoProcessor.from_pretrained(local_model_path)
+                print(f"Successfully loaded model and processor from {local_model_path}")  # noqa: T201
+                return  # Successfully loaded
+            except Exception as e:
+                print(f"Failed to load model from {local_model_path}: {e}. Will attempt to download from Hugging Face Hub.")  # noqa: T201
+
+        # If not found locally or local loading failed, download from Hub
+        print(f"Model not found at {local_model_path} or local loading failed. Downloading '{model_id}' from Hugging Face Hub.")  # noqa: T201
+        try:
+            # Ensure the target directory for saving models exists
+            models_dir.mkdir(parents=True, exist_ok=True)
+
+            self.model = model_cls.from_pretrained(
+                model_id,
+                torch_dtype=torch.bfloat16,
+                low_cpu_mem_usage=True,
+                quantization_config=quantization_config,
+                device_map=self.device.type,
+            )
+            self.processor = AutoProcessor.from_pretrained(model_id)
+            print(f"Successfully downloaded '{model_id}'.")  # noqa: T201
+
+            # Save the downloaded model and processor to the local path for future use
+            try:
+                print(f"Saving model and processor to {local_model_path}...")  # noqa: T201
+                self.model.save_pretrained(local_model_path)
+                self.processor.save_pretrained(local_model_path)
+                print(f"Successfully saved model and processor to {local_model_path}.")  # noqa: T201
+            except Exception as e:
+                # Log if saving fails, but the model is already loaded in memory, so a warning is sufficient.
+                print(f"Warning: Failed to save model/processor to {local_model_path}: {e}")  # noqa: T201
+
+        except Exception as e:
+            print(f"Fatal error: Could not download or load model '{model_id}' from Hugging Face Hub: {e}")  # noqa: T201
+            # Depending on desired behavior, could set model/processor to None or raise
+            raise # Re-raise the exception if download or initial load from hub fails
 
 
 def example() -> None:

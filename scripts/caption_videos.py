@@ -456,10 +456,10 @@ def main(  # noqa: PLR0913
         output_format = OutputFormat.JSON
         if input_path.is_file():  # noqa: SIM108
             # Default to a JSON file with the same name as the input media
-            output = input_path.with_suffix(".dataset.json")
+            output = input_path.with_suffix(".captions.json")
         else:
             # Default to a JSON file in the input directory
-            output = input_path / "dataset.json"
+            output = input_path / "captions.json"
     else:
         # Determine format from file extension
         output_format = OutputFormat(Path(output).suffix.lstrip(".").lower())

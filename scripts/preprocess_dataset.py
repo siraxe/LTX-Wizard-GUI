@@ -201,6 +201,29 @@ class DatasetPreprocessor:
             f"Results saved to [cyan]{output_base}[/]",
         )
 
+        # Write processed.json mapping video files to latent files
+        try:
+            # Get the dataset object from the dataloader
+            dataset = dataloader.dataset
+            # Try to access .video_paths (should be a list of Path objects)
+            video_paths = getattr(dataset, 'video_paths', None)
+            if video_paths is not None:
+                processed_map = {}
+                for idx, video_path in enumerate(video_paths):
+                    # Use only the filename for mapping (or str(video_path.relative_to(data_root))) if needed
+                    video_key = video_path.name
+                    latent_file = f"latent_{idx:08d}.pt"
+                    processed_map[video_key] = latent_file
+                processed_json_path = output_base / "processed.json"
+                with open(processed_json_path, "w", encoding="utf-8") as f:
+                    import json
+                    json.dump(processed_map, f, indent=2)
+                console.print(f"[bold green]✓[/] Wrote processed.json with {len(processed_map)} entries to [cyan]{processed_json_path}[/]")
+            else:
+                console.print("[bold yellow]Warning:[/] Could not find video_paths in dataset, skipping processed.json.")
+        except Exception as ex:
+            console.print(f"[bold red]Error writing processed.json:[/] {ex}")
+
     def _load_models(self, model_source: str, load_text_encoder_in_8bit: bool) -> None:
         """Initialize and load the required models"""
         with console.status(f"[bold]Loading models from [cyan]{model_source}[/]...", spinner="dots"):
@@ -361,7 +384,7 @@ def _parse_resolution_buckets(resolution_buckets_str: str) -> list[tuple[int, in
 
 
 @app.command()
-def main(  # noqa: PLR0913
+def main(
     dataset_path: str = typer.Argument(
         ...,
         help="Path to dataset directory or metadata file (CSV/JSON/JSONL)",
@@ -419,6 +442,11 @@ def main(  # noqa: PLR0913
         help="Decode and save videos after encoding (for verification purposes)",
     ),
 ) -> None:
+    print(f"DEBUG: id_token argument received: {id_token}")
+    if id_token:
+        console.print(f"[bold yellow]LoRA trigger word[/] [cyan]{id_token}[/] [bold yellow]will be prepended to all captions[/]")
+    else:
+        print("DEBUG: No id_token argument was passed.")
     """Preprocess a video dataset by computing and saving latents and text embeddings.
 
     The dataset can be specified in two ways:

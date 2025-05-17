@@ -1,0 +1,3 @@
+D:\AI\LTX-Video-Trainer-UI\workspace\configs\cake4.yaml
+D:\AI\LTX-Video-Trainer-UI\workspace\configs\cake2.yaml
+D:\AI\LTX-Video-Trainer-UI\workspace\configs\cake.yaml

@@ -23,6 +23,10 @@ import decord  # type: ignore
 
 decord.bridge.set_bridge("torch")
 
+# Top-level function for pickling , WHAT IS THIS? COULD ERROR IF NOT DONE ?
+#def clamp_tensor_to_0_1(x: torch.Tensor) -> torch.Tensor:
+#    return x.clamp_(0, 1)
+
 COMMON_BEGINNING_PHRASES: tuple[str, ...] = (
     "This video",
     "The video",
@@ -203,7 +207,7 @@ class ImageOrVideoDataset(Dataset):
 
         self.video_transforms = transforms.Compose(
             [
-                transforms.Lambda(lambda x: x.clamp_(0, 1)),
+                #transforms.Lambda(clamp_tensor_to_0_1),
                 transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
             ],
         )

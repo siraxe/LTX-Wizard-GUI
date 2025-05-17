@@ -4,6 +4,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Union
 from urllib.parse import urlparse
+import os
+from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub.utils import HfHubHTTPError, HFValidationError
 
 import torch
 from diffusers import (
@@ -17,6 +20,8 @@ from transformers import T5EncoderModel, T5Tokenizer
 
 # The main HF repo to load scheduler, tokenizer, and text encoder from
 HF_MAIN_REPO = "Lightricks/LTX-Video"
+LOCAL_MODELS_CACHE = Path("models")
+LOCAL_MODELS_CACHE.mkdir(parents=True, exist_ok=True)
 
 
 class LtxvModelVersion(str, Enum):
@@ -60,7 +65,7 @@ class LtxvModelVersion(str, Enum):
         raise ValueError(f"Unknown version: {self}")
 
     @property
-    def safetensors_url(self) -> str:  # noqa: PLR0911
+    def safetensors_url(self) -> str:
         """Get the safetensors URL for this version."""
         match self:
             case LtxvModelVersion.LTXV_2B_090:
@@ -102,32 +107,74 @@ class LtxvModelComponents(BaseModel):
 def load_scheduler() -> FlowMatchEulerDiscreteScheduler:
     """
     Load the Flow Matching scheduler component from the main HF repo.
+    It will first check the local `models/` cache, then download if not found.
 
     Returns:
         Loaded scheduler
     """
-    return FlowMatchEulerDiscreteScheduler.from_pretrained(
-        HF_MAIN_REPO,
-        subfolder="scheduler",
-    )
+    repo_id = HF_MAIN_REPO
+    subfolder = "scheduler"
+    # download_destination_parent is where snapshot_download will place the 'scheduler' folder from the repo.
+    download_destination_parent = LOCAL_MODELS_CACHE / (repo_id.replace("/", "--") + f"--{subfolder}-root")
+    actual_model_files_dir = download_destination_parent / subfolder # e.g. models/Lightricks--LTX-Video--scheduler-root/scheduler/
+
+    try:
+        # Attempt to load from where files are expected after download
+        return FlowMatchEulerDiscreteScheduler.from_pretrained(
+            actual_model_files_dir,
+            local_files_only=True,
+        )
+    except (OSError, HFValidationError): 
+        # Download: this will place e.g. repo/scheduler/* into download_destination_parent/scheduler/*
+        snapshot_download(
+            repo_id=repo_id,
+            allow_patterns=[f"{subfolder}/*", f"{subfolder}/**/*"], # Get files and files in subdirectories of the target subfolder
+            local_dir=download_destination_parent, 
+            local_dir_use_symlinks=False,
+            # force_download=True # Uncomment to force fresh download
+        )
+        # Load from the now populated local cache
+        return FlowMatchEulerDiscreteScheduler.from_pretrained(
+            actual_model_files_dir, 
+            local_files_only=True,
+        )
 
 
 def load_tokenizer() -> T5Tokenizer:
     """
     Load the T5 tokenizer component from the main HF repo.
+    It will first check the local `models/` cache, then download if not found.
 
     Returns:
         Loaded tokenizer
     """
-    return T5Tokenizer.from_pretrained(
-        HF_MAIN_REPO,
-        subfolder="tokenizer",
-    )
+    repo_id = HF_MAIN_REPO
+    subfolder = "tokenizer"
+    download_destination_parent = LOCAL_MODELS_CACHE / (repo_id.replace("/", "--") + f"--{subfolder}-root")
+    actual_model_files_dir = download_destination_parent / subfolder
+
+    try:
+        return T5Tokenizer.from_pretrained(
+            actual_model_files_dir,
+            local_files_only=True,
+        )
+    except (OSError, HFValidationError):
+        snapshot_download(
+            repo_id=repo_id,
+            allow_patterns=[f"{subfolder}/*", f"{subfolder}/**/*"],
+            local_dir=download_destination_parent,
+            local_dir_use_symlinks=False,
+        )
+        return T5Tokenizer.from_pretrained(
+            actual_model_files_dir,
+            local_files_only=True,
+        )
 
 
 def load_text_encoder(*, load_in_8bit: bool = False) -> T5EncoderModel:
     """
     Load the T5 text encoder component from the main HF repo.
+    It will first check the local `models/` cache, then download if not found.
 
     Args:
         load_in_8bit: Whether to load in 8-bit precision
@@ -135,12 +182,34 @@ def load_text_encoder(*, load_in_8bit: bool = False) -> T5EncoderModel:
     Returns:
         Loaded text encoder
     """
+    repo_id = HF_MAIN_REPO
+    subfolder = "text_encoder"
+    download_destination_parent = LOCAL_MODELS_CACHE / (repo_id.replace("/", "--") + f"--{subfolder}-root")
+    actual_model_files_dir = download_destination_parent / subfolder
+    
     kwargs = (
         {"quantization_config": BitsAndBytesConfig(load_in_8bit=True)}
         if load_in_8bit
         else {"torch_dtype": torch.bfloat16}
     )
-    return T5EncoderModel.from_pretrained(HF_MAIN_REPO, subfolder="text_encoder", **kwargs)
+    try:
+        return T5EncoderModel.from_pretrained(
+            actual_model_files_dir,
+            local_files_only=True,
+            **kwargs,
+        )
+    except (OSError, HFValidationError):
+        snapshot_download(
+            repo_id=repo_id,
+            allow_patterns=[f"{subfolder}/*", f"{subfolder}/**/*"],
+            local_dir=download_destination_parent,
+            local_dir_use_symlinks=False,
+        )
+        return T5EncoderModel.from_pretrained(
+            actual_model_files_dir,
+            local_files_only=True,
+            **kwargs,
+        )
 
 
 def load_vae(
@@ -150,6 +219,7 @@ def load_vae(
 ) -> AutoencoderKLLTXVideo:
     """
     Load the VAE component.
+    It will first check the local `models/` cache, then download if not found.
 
     Args:
         source: Model source (HF repo, local path, or version)
@@ -158,16 +228,11 @@ def load_vae(
     Returns:
         Loaded VAE
     """
-    if isinstance(source, str):  # noqa: SIM102
-        # Try to parse as version first
+    if isinstance(source, str): 
         if version := _try_parse_version(source):
             source = version
 
     if isinstance(source, LtxvModelVersion):
-        # NOTE: LTXV_2B_095's VAE must be loaded from the Diffusers folder-format instead of safetensors
-        # This is a special case also for LTXV_2B_096_DEV and LTXV_13B_097_* which
-        # don't have standalone HuggingFace repos, but share the same VAE as LTXV_2B_095.
-        # Remove this once Diffusers properly supports loading from the safetensors file.
         if source in (
             LtxvModelVersion.LTXV_2B_095,
             LtxvModelVersion.LTXV_2B_096_DEV,
@@ -175,29 +240,127 @@ def load_vae(
             LtxvModelVersion.LTXV_13B_097_DEV,
             LtxvModelVersion.LTXV_13B_097_DISTILLED,
         ):
-            return AutoencoderKLLTXVideo.from_pretrained(
-                LtxvModelVersion.LTXV_2B_095.hf_repo,
-                subfolder="vae",
-                torch_dtype=dtype,
-            )
-        return AutoencoderKLLTXVideo.from_single_file(
-            source.safetensors_url,
-            torch_dtype=dtype,
-        )
-    elif isinstance(source, (str, Path)):
-        if _is_huggingface_repo(source):
-            return AutoencoderKLLTXVideo.from_pretrained(
-                source,
-                subfolder="vae",
-                torch_dtype=dtype,
-            )
-        elif _is_safetensors_url(source):
-            return AutoencoderKLLTXVideo.from_single_file(
-                source,
-                torch_dtype=dtype,
-            )
+            repo_id_to_load = LtxvModelVersion.LTXV_2B_095.hf_repo
+            subfolder = "vae"
+            download_destination_parent = LOCAL_MODELS_CACHE / (repo_id_to_load.replace("/", "--") + f"--{subfolder}-root")
+            actual_model_files_dir = download_destination_parent / subfolder
+            try:
+                return AutoencoderKLLTXVideo.from_pretrained(
+                    actual_model_files_dir,
+                    torch_dtype=dtype,
+                    local_files_only=True,
+                )
+            except (OSError, HFValidationError):
+                snapshot_download(
+                    repo_id=repo_id_to_load,
+                    allow_patterns=[f"{subfolder}/*", f"{subfolder}/**/*"],
+                    local_dir=download_destination_parent,
+                    local_dir_use_symlinks=False,
+                )
+                return AutoencoderKLLTXVideo.from_pretrained(
+                    actual_model_files_dir,
+                    torch_dtype=dtype,
+                    local_files_only=True,
+                )
+        else: 
+            file_url = source.safetensors_url
+            filename = file_url.split("/")[-1]
+            
+            parsed_url = urlparse(file_url)
+            path_parts = parsed_url.path.strip("/").split("/")
+            repo_id_of_file = f"{path_parts[0]}/{path_parts[1]}" if len(path_parts) > 1 else HF_MAIN_REPO
+            actual_filename_on_hub = path_parts[-1]
 
-    raise ValueError(f"Invalid model source: {source}")
+            model_name_for_path = filename.replace(".safetensors", "")
+            # For single files, target_local_file_dir is where the file itself will be placed.
+            target_local_file_dir = LOCAL_MODELS_CACHE / "vae" / model_name_for_path 
+            target_local_file_path = target_local_file_dir / actual_filename_on_hub
+            target_local_file_dir.mkdir(parents=True, exist_ok=True)
+
+            try:
+                return AutoencoderKLLTXVideo.from_single_file(
+                    target_local_file_path,
+                    torch_dtype=dtype,
+                    local_files_only=True,
+                )
+            except (OSError, HFValidationError, HfHubHTTPError): 
+                hf_hub_download(
+                    repo_id=repo_id_of_file,
+                    filename=actual_filename_on_hub,
+                    local_dir=target_local_file_dir, # hf_hub_download puts the file directly in local_dir
+                    local_dir_use_symlinks=False,
+                )
+                return AutoencoderKLLTXVideo.from_single_file(
+                    target_local_file_path, 
+                    torch_dtype=dtype,
+                    local_files_only=True,
+                )
+
+    elif isinstance(source, (str, Path)):
+        source_str = str(source)
+        if _is_huggingface_repo(source_str): 
+            repo_id = source_str
+            subfolder = "vae" 
+            download_destination_parent = LOCAL_MODELS_CACHE / (repo_id.replace("/", "--") + f"--{subfolder}-root")
+            actual_model_files_dir = download_destination_parent / subfolder
+            
+            try:
+                return AutoencoderKLLTXVideo.from_pretrained(
+                    actual_model_files_dir, 
+                    torch_dtype=dtype,
+                    local_files_only=True,
+                )
+            except (OSError, HFValidationError):
+                snapshot_download(
+                    repo_id=repo_id,
+                    allow_patterns=[f"{subfolder}/*", f"{subfolder}/**/*"], 
+                    local_dir=download_destination_parent, 
+                    local_dir_use_symlinks=False,
+                )
+                return AutoencoderKLLTXVideo.from_pretrained(
+                    actual_model_files_dir, 
+                    torch_dtype=dtype,
+                    local_files_only=True,
+                )
+        elif _is_safetensors_url(source_str) or Path(source_str).is_file(): 
+            is_local_file = Path(source_str).is_file()
+            if is_local_file:
+                return AutoencoderKLLTXVideo.from_single_file(source_str, torch_dtype=dtype)
+
+            file_url = source_str
+            filename = file_url.split("/")[-1]
+            parsed_url = urlparse(file_url)
+            path_parts = parsed_url.path.strip("/").split("/")
+            repo_id_of_file = f"{path_parts[0]}/{path_parts[1]}" if len(path_parts) >= 2 else None 
+            actual_filename_on_hub = path_parts[-1]
+
+            model_name_for_path = filename.replace(".safetensors", "")
+            target_local_file_dir = LOCAL_MODELS_CACHE / "vae_single_files" / model_name_for_path
+            target_local_file_path = target_local_file_dir / actual_filename_on_hub
+            target_local_file_dir.mkdir(parents=True, exist_ok=True)
+
+            try:
+                return AutoencoderKLLTXVideo.from_single_file(
+                    target_local_file_path,
+                    torch_dtype=dtype,
+                    local_files_only=True,
+                )
+            except (OSError, HFValidationError, HfHubHTTPError):
+                if not repo_id_of_file: 
+                    raise ValueError(f"Cannot automatically download VAE from non-HuggingFace URL: {file_url} and not found locally.")
+                hf_hub_download(
+                    repo_id=repo_id_of_file,
+                    filename=actual_filename_on_hub,
+                    local_dir=target_local_file_dir,
+                    local_dir_use_symlinks=False,
+                )
+                return AutoencoderKLLTXVideo.from_single_file(
+                    target_local_file_path,
+                    torch_dtype=dtype,
+                    local_files_only=True,
+                )
+
+    raise ValueError(f"Invalid model source for VAE: {source}")
 
 
 def load_transformer(
@@ -207,6 +370,7 @@ def load_transformer(
 ) -> LTXVideoTransformer3DModel:
     """
     Load the transformer component.
+    It will first check the local `models/` cache, then download if not found.
 
     Args:
         source: Model source (HF repo, local path, or version)
@@ -215,37 +379,127 @@ def load_transformer(
     Returns:
         Loaded transformer
     """
-    if isinstance(source, str):  # noqa: SIM102
-        # Try to parse as version first
+    if isinstance(source, str):  
         if version := _try_parse_version(source):
             source = version
 
     if isinstance(source, LtxvModelVersion):
-        # Special case for LTXV-13B which doesn't yet have a Diffusers config
+        file_url = source.safetensors_url # All LtxvModelVersion for transformers use a safetensors_url
+        filename = file_url.split("/")[-1]
+        parsed_url = urlparse(file_url) 
+        path_parts = parsed_url.path.strip("/").split("/")
+        repo_id_of_file = f"{path_parts[0]}/{path_parts[1]}" if len(path_parts) > 1 else HF_MAIN_REPO
+        actual_filename_on_hub = path_parts[-1]
+
+        model_name_for_path = filename.replace(".safetensors", "")
+        # For single files, target_local_file_dir is where the file itself will be placed.
+        target_local_file_dir = LOCAL_MODELS_CACHE / "transformer" / model_name_for_path
+        target_local_file_path = target_local_file_dir / actual_filename_on_hub
+        target_local_file_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Special handling for LTXV_13B_097_DEV which uses a custom loader function
         if source in (
             LtxvModelVersion.LTXV_13B_097_DEV,
             LtxvModelVersion.LTXV_13B_097_DISTILLED,
         ):
-            return _load_ltxv_13b_transformer(source.safetensors_url, dtype=dtype)
+            if not target_local_file_path.exists(): # Check if file needs download
+                 try:
+                    hf_hub_download(
+                        repo_id=repo_id_of_file,
+                        filename=actual_filename_on_hub,
+                        local_dir=target_local_file_dir,
+                        local_dir_use_symlinks=False,
+                    )
+                 except Exception as e:
+                    raise IOError(f"Failed to download {actual_filename_on_hub} for LTXV_13B_097_DEV from {repo_id_of_file}: {e}") from e
+            return _load_ltxv_13b_transformer(str(target_local_file_path), dtype=dtype)
 
-        return LTXVideoTransformer3DModel.from_single_file(
-            source.safetensors_url,
-            torch_dtype=dtype,
-        )
-    elif isinstance(source, (str, Path)):
-        if _is_huggingface_repo(source):
-            return LTXVideoTransformer3DModel.from_pretrained(
-                source,
-                subfolder="transformer",
-                torch_dtype=dtype,
-            )
-        elif _is_safetensors_url(source):
+        # For other LtxvModelVersion transformers (single .safetensors file)
+        try:
             return LTXVideoTransformer3DModel.from_single_file(
-                source,
+                target_local_file_path,
                 torch_dtype=dtype,
+                local_files_only=True,
+            )
+        except (OSError, HFValidationError, HfHubHTTPError):
+            hf_hub_download(
+                repo_id=repo_id_of_file,
+                filename=actual_filename_on_hub,
+                local_dir=target_local_file_dir,
+                local_dir_use_symlinks=False,
+            )
+            return LTXVideoTransformer3DModel.from_single_file(
+                target_local_file_path,
+                torch_dtype=dtype,
+                local_files_only=True,
             )
 
-    raise ValueError(f"Invalid model source: {source}")
+    elif isinstance(source, (str, Path)):
+        source_str = str(source)
+        if _is_huggingface_repo(source_str): 
+            repo_id = source_str
+            subfolder = "transformer" 
+            download_destination_parent = LOCAL_MODELS_CACHE / (repo_id.replace("/", "--") + f"--{subfolder}-root")
+            actual_model_files_dir = download_destination_parent / subfolder
+            
+            try:
+                return LTXVideoTransformer3DModel.from_pretrained(
+                    actual_model_files_dir, 
+                    torch_dtype=dtype,
+                    local_files_only=True,
+                )
+            except (OSError, HFValidationError): 
+                snapshot_download(
+                    repo_id=repo_id,
+                    allow_patterns=[f"{subfolder}/*", f"{subfolder}/**/*"], 
+                    local_dir=download_destination_parent, 
+                    local_dir_use_symlinks=False,
+                )
+                return LTXVideoTransformer3DModel.from_pretrained(
+                    actual_model_files_dir, 
+                    torch_dtype=dtype,
+                    local_files_only=True,
+                )
+
+        elif _is_safetensors_url(source_str) or Path(source_str).is_file(): 
+            is_local_file = Path(source_str).is_file()
+            if is_local_file:
+                return LTXVideoTransformer3DModel.from_single_file(source_str, torch_dtype=dtype)
+
+            file_url = source_str
+            filename = file_url.split("/")[-1]
+            parsed_url = urlparse(file_url)
+            path_parts = parsed_url.path.strip("/").split("/")
+            repo_id_of_file = f"{path_parts[0]}/{path_parts[1]}" if len(path_parts) >= 2 else None
+            actual_filename_on_hub = path_parts[-1]
+
+            model_name_for_path = filename.replace(".safetensors", "")
+            target_local_file_dir = LOCAL_MODELS_CACHE / "transformer_single_files" / model_name_for_path
+            target_local_file_path = target_local_file_dir / actual_filename_on_hub
+            target_local_file_dir.mkdir(parents=True, exist_ok=True)
+
+            try:
+                return LTXVideoTransformer3DModel.from_single_file(
+                    target_local_file_path,
+                    torch_dtype=dtype,
+                    local_files_only=True,
+                )
+            except (OSError, HFValidationError, HfHubHTTPError):
+                if not repo_id_of_file:
+                     raise ValueError(f"Cannot automatically download Transformer from non-HuggingFace URL: {file_url} and not found locally.")
+                hf_hub_download(
+                    repo_id=repo_id_of_file,
+                    filename=actual_filename_on_hub,
+                    local_dir=target_local_file_dir,
+                    local_dir_use_symlinks=False,
+                )
+                return LTXVideoTransformer3DModel.from_single_file(
+                    target_local_file_path,
+                    torch_dtype=dtype,
+                    local_files_only=True,
+                )
+
+    raise ValueError(f"Invalid model source for Transformer: {source}")
 
 
 def load_ltxv_components(
@@ -322,7 +576,7 @@ def _is_safetensors_url(source: str | Path) -> bool:
     return source.endswith(".safetensors")
 
 
-def _load_ltxv_13b_transformer(safetensors_url: str, *, dtype: torch.dtype) -> LTXVideoTransformer3DModel:
+def _load_ltxv_13b_transformer(safetensors_url_or_path: str, *, dtype: torch.dtype) -> LTXVideoTransformer3DModel:
     """A specific loader for LTXV-13B's transformer which doesn't yet have a Diffusers config"""
     transformer_13b_config = {
         "_class_name": "LTXVideoTransformer3DModel",
@@ -344,11 +598,28 @@ def _load_ltxv_13b_transformer(safetensors_url: str, *, dtype: torch.dtype) -> L
         "qk_norm": "rms_norm_across_heads",
     }
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as f:
-        json.dump(transformer_13b_config, f)
-        f.flush()
+    temp_config_file = None
+    try:
+        # Create NamedTemporaryFile with delete=False
+        temp_config_file_obj = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        temp_config_file_path = temp_config_file_obj.name
+        
+        json.dump(transformer_13b_config, temp_config_file_obj)
+        temp_config_file_obj.flush()
+        # Explicitly close the file object before passing its name
+        temp_config_file_obj.close()
+
         return LTXVideoTransformer3DModel.from_single_file(
-            safetensors_url,
-            config=f.name,
+            safetensors_url_or_path,
+            config=temp_config_file_path, # Pass the path to the now-closed temporary file
             torch_dtype=dtype,
         )
+    finally:
+        # Ensure the temporary file is deleted if it was created
+        if temp_config_file_path and Path(temp_config_file_path).exists():
+            try:
+                os.remove(temp_config_file_path)
+            except OSError:
+                # Log or handle deletion error if necessary, but don't let it crash the main flow
+                # For example: print(f"Warning: Could not delete temporary config file {temp_config_file_path}")
+                pass

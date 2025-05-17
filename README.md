@@ -1,3 +1,3 @@
-# LTX Video Trainer UI
+# LTX-Wizard-GUI
 
 This project is for ... 
