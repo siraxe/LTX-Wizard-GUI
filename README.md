@@ -57,11 +57,11 @@ The "Sampling" subtab allows you to run inference tests on your model during the
 
 ## ⌨️ Hotkeys
 
-`ctrl + S` - save
-`ctrl + Shift + S` - save as
-`ctrl + O` - open
-`]` - next video
-`[` - previous video
+- `ctrl + S` - save
+- `ctrl + Shift + S` - save as
+- `ctrl + O` - open
+- `]` - next video
+- `[` - previous video
 
 ---
 
