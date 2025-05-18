@@ -39,6 +39,10 @@ def main(config_path: str = typer.Argument(..., help="Path to YAML configuration
     with open(config_path, "r") as file:
         config_data = yaml.safe_load(file)
 
+    # Remove the 'misc' section if it exists to avoid validation errors
+    if 'misc' in config_data:
+        del config_data['misc']
+
     # Convert the loaded data to the LtxvTrainerConfig object
     try:
         trainer_config = LtxvTrainerConfig(**config_data)
