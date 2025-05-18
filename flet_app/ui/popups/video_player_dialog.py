@@ -129,10 +129,6 @@ def build_navigation_controls(on_prev, on_next) -> list[ft.Control]:
     right_arrow = ft.IconButton(ft.Icons.ARROW_RIGHT, on_click=on_next, tooltip="Next video", icon_size=20)
     return [left_arrow, right_arrow]
 
-def build_update_button(on_click) -> ft.Control:
-    """Creates the Update button for saving captions."""
-    return create_styled_button("Update", on_click=on_click, width=100)
-
 def update_video_player_source(video_player: Video, new_video_path: str):
     """Updates the video player's source to the new video path."""
     video_player.stop()
@@ -180,6 +176,11 @@ def switch_video_in_dialog(page: ft.Page, new_video_offset: int):
     new_video_path = get_next_video_path(_current_video_list_for_dialog, _current_video_path_for_dialog, new_video_offset)
     if not new_video_path or new_video_path == _current_video_path_for_dialog:
         return
+
+    # Save the caption for the current video before switching
+    if _active_caption_field_instance:
+        current_caption = _active_caption_field_instance.value.strip()
+        save_caption_for_video(page, _current_video_path_for_dialog, current_caption, _active_on_caption_updated_callback)
 
     _current_video_path_for_dialog = new_video_path
     update_dialog_title(page, new_video_path)
@@ -252,8 +253,16 @@ def handle_caption_dialog_keyboard(page: ft.Page, e: ft.KeyboardEvent):
             switch_video_in_dialog(page, -1)
         elif e.key == "]":
             switch_video_in_dialog(page, 1)
-    if e.ctrl and e.key.lower() == "s" and _active_caption_field_instance:
-        handle_update_caption_click(page)
+
+def handle_dialog_dismiss(e):
+    """
+    Handles the dialog dismissal event: saves the current caption if the caption field exists.
+    """
+    global _active_caption_field_instance, _current_video_path_for_dialog, _active_on_caption_updated_callback
+    if _active_caption_field_instance and _current_video_path_for_dialog:
+        current_caption = _active_caption_field_instance.value.strip()
+        # Pass page=None here as page may not be valid after dialog is dismissed
+        save_caption_for_video(page=None, video_path=_current_video_path_for_dialog, new_caption=current_caption, on_caption_updated_callback=_active_on_caption_updated_callback)
 
 # --- Main Dialog Construction ---
 def create_video_player_with_captions_content(page: ft.Page, video_path: str, video_list: list, on_caption_updated_callback: callable = None) -> tuple[ft.Column, list[ft.Control]]:
@@ -281,14 +290,12 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
 
     _active_message_container_instance = build_message_container(content=message_control)
 
-    update_button = build_update_button(on_click=lambda e: handle_update_caption_click(page))
-
     content_column = ft.Column(
         controls=[
             ft.Row([_active_video_player_instance], alignment=ft.MainAxisAlignment.CENTER),
             _active_caption_field_instance,
             ft.Row([
-                _active_message_container_instance, update_button
+                _active_message_container_instance
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER)
         ],
         spacing=10, tight=True,
@@ -315,10 +322,17 @@ def open_video_captions_dialog(page: ft.Page, video_path: str, video_list=None, 
     desired_width = VIDEO_PLAYER_DIALOG_WIDTH
 
     if hasattr(page, 'base_dialog') and page.base_dialog:
+        # Set the on_dismiss callback for the base_dialog instance before showing
+        # This assumes base_dialog is a PopupDialogBase instance or similar
+        page.base_dialog._on_dismiss_callback = handle_dialog_dismiss
+        # Pass the handle_dialog_dismiss callback to the PopupDialogBase instance
         page.base_dialog.show_dialog(content=main_content_ui, title=dialog_title_text, new_width=desired_width, title_prefix_controls=nav_prefix_controls)
+        # Assuming base_dialog is an instance of PopupDialogBase or a similar class that now supports on_dismiss via its __init__
+        # The on_dismiss is now set when the PopupDialogBase instance is created in the main app structure, not here.
+        # We only need to ensure that the instance used here is correctly initialized with the callback.
     else:
         print("Error: Base dialog (PopupDialogBase) not found on page.")
-        fallback_alert = ft.AlertDialog(title=ft.Text(dialog_title_text), content=main_content_ui, actions=[ft.TextButton("Close", on_click=lambda e: fallback_alert.close())])
+        fallback_alert = ft.AlertDialog(title=ft.Text(dialog_title_text), content=main_content_ui, actions=[ft.TextButton("Close", on_click=lambda e: fallback_alert.close())], on_dismiss=handle_dialog_dismiss)
         page.dialog = fallback_alert; fallback_alert.open = True; page.update()
 
     def caption_dialog_keyboard_handler(e: ft.KeyboardEvent):

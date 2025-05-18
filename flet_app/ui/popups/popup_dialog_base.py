@@ -92,11 +92,12 @@ class PopupDialogBase(ft.Container):
     """
     DEFAULT_DIALOG_WIDTH = 400
 
-    def __init__(self, page: ft.Page, content: ft.Control, title: str = "Dialog"):
+    def __init__(self, page: ft.Page, content: ft.Control, title: str = "Dialog", on_dismiss: callable = None):
         super().__init__(expand=True)
         self.page = page
         self._initial_content = content
         self._initial_title = title
+        self._on_dismiss_callback = on_dismiss
 
         # Build GUI controls
         self._build_gui()
@@ -159,6 +160,9 @@ class PopupDialogBase(ft.Container):
         self.visible = False
         self.disabled = True
         self.background_layer.on_click = None
+        # Call the dismiss callback if it exists
+        if self._on_dismiss_callback:
+            self._on_dismiss_callback(e)
         self.page.close(self)
 
     @property
