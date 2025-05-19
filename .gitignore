@@ -23,11 +23,15 @@ tmp
 *.safetensors.index.json
 *.safetensors.index.json.lock
 *.json
+*.yaml
 
+_misc/
 workspace/configs/
 workspace/datasets/
 workspace/thumbnails/
 flet_app/ui/utils/recent_files.txt
+flet_app/assets/config_to_train.yaml
+flet_app/ffmpeg/
 
 scripts_fp8/*
 src/ltxv_trainer_fp8/*

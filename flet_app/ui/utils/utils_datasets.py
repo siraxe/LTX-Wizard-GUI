@@ -15,6 +15,26 @@ DEFAULT_MODEL_NAME = "LTXV_13B_097_DEV"
 
 
 # Helper to generate thumbnail for a video
+
+def regenerate_all_thumbnails_for_dataset(dataset_name):
+    import glob
+    dataset_path = os.path.join(DATASETS_DIR, dataset_name)
+    thumbnails_dir = os.path.join(THUMBNAILS_BASE_DIR, dataset_name)
+    if not os.path.exists(dataset_path):
+        return
+    os.makedirs(thumbnails_dir, exist_ok=True)
+    for ext in VIDEO_EXTENSIONS:
+        for video_path in glob.glob(os.path.join(dataset_path, f"*{ext}")) + glob.glob(os.path.join(dataset_path, f"*{ext.upper()}")):
+            video_name = os.path.basename(video_path)
+            thumbnail_name = f"{os.path.splitext(video_name)[0]}.jpg"
+            thumbnail_path = os.path.join(thumbnails_dir, thumbnail_name)
+            if os.path.exists(thumbnail_path):
+                try:
+                    os.remove(thumbnail_path)
+                except Exception:
+                    pass
+            generate_thumbnail(video_path, thumbnail_path)
+
 def generate_thumbnail(video_path, thumbnail_path):
     try:
         vid = cv2.VideoCapture(video_path)
@@ -135,12 +155,17 @@ def get_videos_and_thumbnails(dataset_name):
                 # print(f"Error extracting info for {video_name}: {e}")
                 pass
                 
-        if not os.path.exists(thumbnail_path):
-            if generate_thumbnail(video_path, thumbnail_path): # Use the local generate_thumbnail
-                pass # Successfully generated
-            else:
-                # print(f"Failed to generate thumbnail for {video_path}")
+        # Always regenerate thumbnail to ensure freshness
+        if os.path.exists(thumbnail_path):
+            try:
+                os.remove(thumbnail_path)
+            except Exception as e:
                 pass
+        if generate_thumbnail(video_path, thumbnail_path):
+            pass # Successfully generated
+        else:
+            # print(f"Failed to generate thumbnail for {video_path}")
+            pass
 
         if os.path.exists(thumbnail_path):
             thumbnail_paths[video_path] = thumbnail_path

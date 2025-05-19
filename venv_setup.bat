@@ -17,5 +17,8 @@ venv\Scripts\pip install -r requirements.txt
 :: Install local src package
 venv\Scripts\pip install -e .
 
+:: Get ffmpeg
+call get_ffmpeg.bat
+
 :: Activate virtual environment (to test)
 venv\Scripts\activate

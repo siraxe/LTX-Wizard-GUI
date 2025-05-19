@@ -407,7 +407,11 @@ def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None
                 grid_control.controls.append(
                     ft.Container(
                         content=ft.Column([
-                            ft.Image(src=thumb_path, width=THUMB_TARGET_W, height=THUMB_TARGET_H, fit=ft.ImageFit.COVER, border_radius=ft.border_radius.all(5)),
+                            # Cache-busting: copy thumbnail to a temp file with a unique name
+                            (lambda _src: ft.Image(src=_src, width=THUMB_TARGET_W, height=THUMB_TARGET_H, fit=ft.ImageFit.COVER, border_radius=ft.border_radius.all(5)))((
+                                __import__('shutil').copy2(thumb_path, thumb_path + f'.tmp_{int(__import__("time").time())}.jpg')
+                                or thumb_path + f'.tmp_{int(__import__("time").time())}.jpg'
+                            ) if thumb_path and os.path.exists(thumb_path) else thumb_path),
                             ft.Text(spans=[
                                 ft.TextSpan("[cap - ", style=ft.TextStyle(color=ft.Colors.GREY_500, size=10)),
                                 ft.TextSpan(cap_val, style=ft.TextStyle(color=cap_color, size=10)),

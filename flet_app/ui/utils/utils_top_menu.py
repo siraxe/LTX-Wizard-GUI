@@ -1,28 +1,9 @@
 import os
 import yaml
 import flet as ft
+import re
 
 class TopBarUtils:
-    class QuotedString(str):
-        pass
-
-    @staticmethod
-    def quoted_presenter(dumper, data):
-        return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='"')
-
-    yaml.add_representer(QuotedString, quoted_presenter)
-
-    @staticmethod
-    def quote_all_strings(obj):
-        if isinstance(obj, str):
-            return TopBarUtils.QuotedString(obj)
-        elif isinstance(obj, list):
-            return [TopBarUtils.quote_all_strings(i) for i in obj]
-        elif isinstance(obj, dict):
-            return {k: TopBarUtils.quote_all_strings(v) for k, v in obj.items()}
-        else:
-            return obj
-
     @staticmethod
     def extract_config_from_controls(control):
         result = {}
@@ -56,7 +37,7 @@ class TopBarUtils:
         if dataset_controls and hasattr(dataset_controls, 'get_selected_dataset'):
             selected_dataset_value = dataset_controls.get_selected_dataset()
             if selected_dataset_value:
-                # Ensure forward slashes for consistency
+                # Ensure forward slashes for consistency - Corrected escaping
                 dataset_path = os.path.join('workspace', 'datasets', selected_dataset_value, 'preprocessed_data').replace('\\', '/')
         if dataset_controls and hasattr(dataset_controls, 'get_num_workers'):
             try:
@@ -90,7 +71,7 @@ class TopBarUtils:
             'model': {
                 'model_source': config.get('Model Source'),
                 'training_mode': config.get('Training Mode'),
-                'load_checkpoint': config.get('Load Checkpoint') or None,
+                'load_checkpoint': config.get('Last Checkpoint') or None,
                 'blocks_to_swap': blocks_to_swap_final,
             },
             'lora': {
@@ -108,7 +89,7 @@ class TopBarUtils:
                 'optimizer_type': config.get('Optimizer Type'),
                 'scheduler_type': config.get('Scheduler Type'),
                 'scheduler_params': {},
-                'enable_gradient_checkpointing': bool(config.get('Enable Gradient Checkpointing', True)),
+                'enable_gradient_checkpointing': bool(config.get('Gradient Checkpointing', True)),
                 'first_frame_conditioning_p': float(config.get('First Frame Conditioning P', 0.5)),
             },
             'acceleration': {
@@ -123,12 +104,12 @@ class TopBarUtils:
                 'num_dataloader_workers': int(num_workers),
             },
             'validation': {
-                'prompts': [s.strip().strip('"') for s in (sampling.get('Prompts') or '').split(',') if s.strip()],
+                'prompts': [],
                 'negative_prompt': sampling.get('Negative Prompt'),
                 'video_dims': eval(sampling.get('Video Dims', '[512, 512, 49]')),
                 'seed': int(sampling.get('Seed (Validation)', 42)),
                 'inference_steps': int(sampling.get('Inference Steps', 50)),
-                'interval': interval_for_yaml,  # Use None for 0
+                'interval': interval_for_yaml,
                 'videos_per_prompt': int(sampling.get('Videos Per Prompt', 1)),
                 'guidance_scale': float(sampling.get('Guidance Scale', 3.5)),
             },
@@ -147,18 +128,33 @@ class TopBarUtils:
                 'match_enabled': match_checkbox,
             }
         }
-        for section in ['model', 'lora', 'optimization', 'acceleration', 'data', 'validation', 'checkpoints', 'flow_matching']:
-            for k, v in yaml_dict[section].items():
-                if k in ['target_modules', 'prompts'] and isinstance(v, list):
-                    yaml_dict[section][k] = [TopBarUtils.QuotedString(str(i)) for i in v]
-                elif k == 'video_dims':
-                    continue
-                elif isinstance(v, str):
-                    yaml_dict[section][k] = TopBarUtils.QuotedString(v)
-        if isinstance(yaml_dict['output_dir'], str):
-            yaml_dict['output_dir'] = TopBarUtils.QuotedString(yaml_dict['output_dir'])
-        if yaml_dict['data']['preprocessed_data_root'] is not None and isinstance(yaml_dict['data']['preprocessed_data_root'], str):
-            yaml_dict['data']['preprocessed_data_root'] = TopBarUtils.QuotedString(yaml_dict['data']['preprocessed_data_root'])
+        prompt_list = []
+        prompts_input = sampling.get('Prompts') or ''
+
+        # --- Revised logic to split prompts by commas and newlines, respecting quotes ---
+        # This regex finds segments which are either:
+        # 1. A quoted string: \"...\" allowing escaped quotes and other escaped characters inside.
+        #    \"(?:[^\"\\\\]|\\.)*\"  - Corrected escaping of backslash inside character set
+        # 2. Or, a sequence of characters that are not commas or newlines.
+        #    [^,\\n]+\
+        # It also handles potential whitespace and empty matches by filtering later.
+        matches = re.findall(r'\"(?:[^\"\\\\]|\\.)*\"|[^,\\n]+', prompts_input)
+
+        # Process the matches to strip whitespace and remove external quotes
+        prompt_list = []
+        for match in matches:
+            cleaned_prompt = match.strip()
+            if cleaned_prompt:
+                # If it\'s a quoted string from the regex match, remove the outer quotes
+                if cleaned_prompt.startswith('\"') and cleaned_prompt.endswith('\"'):
+                    cleaned_prompt = cleaned_prompt[1:-1]
+                    # Unescape escaped quotes and backslashes within the cleaned string
+                    cleaned_prompt = cleaned_prompt.replace('\\\"', '\"').replace('\\\\', '\\\\')
+                prompt_list.append(cleaned_prompt)
+        # --- End of Revised logic ---\
+
+        yaml_dict['validation']['prompts'] = prompt_list
+
         return yaml_dict
 
     @staticmethod
@@ -196,28 +192,8 @@ class TopBarUtils:
             if not training_tab:
                 return
             yaml_dict = TopBarUtils.build_yaml_config_from_ui(training_tab)
-            class InlineListDumper(yaml.SafeDumper):
-                pass
-            def repr_inline_list(dumper, data):
-                return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=True)
-            InlineListDumper.add_representer(list, yaml.SafeDumper.represent_list)
-            def custom_representer(dumper, data):
-                if hasattr(dumper, '_current_key') and dumper._current_key == 'video_dims':
-                    return repr_inline_list(dumper, data)
-                return yaml.SafeDumper.represent_list(dumper, data)
-            def represent_mapping(self, tag, mapping, flow_style=None):
-                value = []
-                for item_key, item_value in mapping.items():
-                    self._current_key = item_key
-                    node_key = self.represent_data(item_key)
-                    node_value = self.represent_data(item_value)
-                    value.append((node_key, node_value))
-                return yaml.MappingNode(tag, value, flow_style=flow_style)
-            InlineListDumper.represent_mapping = represent_mapping
-            InlineListDumper.add_representer(list, custom_representer)
-            InlineListDumper.add_representer(TopBarUtils.QuotedString, TopBarUtils.quoted_presenter)
             with open(path, 'w', encoding='utf-8') as f:
-                yaml.dump(TopBarUtils.quote_all_strings(yaml_dict), f, sort_keys=False, allow_unicode=True, Dumper=InlineListDumper)
+                yaml.dump(yaml_dict, f, sort_keys=False, allow_unicode=True, Dumper=yaml.SafeDumper)
             TopBarUtils.set_yaml_path_and_title(page, path)
             TopBarUtils.add_recent_file(path, page)
             page.is_default_config_loaded = False # Reset flag after successful save
@@ -238,28 +214,8 @@ class TopBarUtils:
                 if not training_tab:
                     return
                 yaml_dict = TopBarUtils.build_yaml_config_from_ui(training_tab)
-                class InlineListDumper(yaml.SafeDumper):
-                    pass
-                def repr_inline_list(dumper, data):
-                    return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=True)
-                InlineListDumper.add_representer(list, yaml.SafeDumper.represent_list)
-                def custom_representer(dumper, data):
-                    if hasattr(dumper, '_current_key') and dumper._current_key == 'video_dims':
-                        return repr_inline_list(dumper, data)
-                    return yaml.SafeDumper.represent_list(dumper, data)
-                def represent_mapping(self, tag, mapping, flow_style=None):
-                    value = []
-                    for item_key, item_value in mapping.items():
-                        self._current_key = item_key
-                        node_key = self.represent_data(item_key)
-                        node_value = self.represent_data(item_value)
-                        value.append((node_key, node_value))
-                    return yaml.MappingNode(tag, value, flow_style=flow_style)
-                InlineListDumper.represent_mapping = represent_mapping
-                InlineListDumper.add_representer(list, custom_representer)
-                InlineListDumper.add_representer(TopBarUtils.QuotedString, TopBarUtils.quoted_presenter)
                 with open(path, 'w', encoding='utf-8') as f:
-                    yaml.dump(TopBarUtils.quote_all_strings(yaml_dict), f, sort_keys=False, allow_unicode=True, Dumper=InlineListDumper)
+                    yaml.dump(yaml_dict, f, sort_keys=False, allow_unicode=True, Dumper=yaml.SafeDumper)
                 TopBarUtils.set_yaml_path_and_title(page, path)
                 TopBarUtils.add_recent_file(path, page)
                 page.is_default_config_loaded = False # Reset flag after successful save as
@@ -323,7 +279,7 @@ class TopBarUtils:
         YAML_TO_LABEL = {
             "model_source": "Model Source",
             "training_mode": "Training Mode",
-            "load_checkpoint": "Load Checkpoint",
+            "load_checkpoint": "Last Checkpoint",
             "blocks_to_swap": "Block to swap",
             "rank": "Rank",
             "alpha": "Alpha",
@@ -337,7 +293,7 @@ class TopBarUtils:
             "optimizer_type": "Optimizer Type",
             "scheduler_type": "Scheduler Type",
             "scheduler_params": "Scheduler Params",
-            "enable_gradient_checkpointing": "Enable Gradient Checkpointing",
+            "enable_gradient_checkpointing": "Gradient Checkpointing",
             "first_frame_conditioning_p": "First Frame Conditioning P",
             "mixed_precision_mode": "Mixed Precision Mode",
             "quantization": "Quantization",
@@ -399,34 +355,38 @@ class TopBarUtils:
                  val = flat["Sampling"]
                  if isinstance(control, ft.Checkbox):
                     control.value = bool(val)
-                    if hasattr(control, '_Control__page') and control._Control__page is not None:
-                        control.update()
             elif label == "Match" and "Match" in flat:
                  val = flat["Match"]
                  if isinstance(control, ft.Checkbox):
                     control.value = bool(val)
-                    if hasattr(control, '_Control__page') and control._Control__page is not None:
-                        control.update()
+            elif label == "Prompts" and yaml_key and yaml_key in flat:
+                val = flat[yaml_key]
+                if isinstance(control, ft.TextField):
+                     if isinstance(val, list):
+                        # Join prompt list with quotes, commas, and newlines for multiline TextField
+                        quoted_prompts = [f'"{str(x)}"'+ ',' for x in val] # Add comma after each quoted prompt
+                        # Remove the last comma before joining with newline
+                        if quoted_prompts:
+                            quoted_prompts[-1] = quoted_prompts[-1].rstrip(',')
+                        control.value = '\n'.join(quoted_prompts)
+                     else:
+                        # If it's not a list (e.g., single prompt string), set directly, potentially quoting it
+                        if isinstance(val, str):
+                             # If a single string, put quotes around it
+                            control.value = f'"{val}"'
+                        else:
+                            control.value = str(val) if val is not None else ""
             elif yaml_key and yaml_key in flat:
                 val = flat[yaml_key]
                 # If loading interval and it's None, set UI to '0'
                 if yaml_key == "interval" and val is None:
                     val = "0"
                 if isinstance(control, ft.TextField):
+                    # Keep original logic for other text fields (joining lists with comma space)
                     if isinstance(val, list):
                         control.value = ', '.join(str(x) for x in val)
                     else:
                         control.value = str(val) if val is not None else ""
-                    if hasattr(control, '_Control__page') and control._Control__page is not None:
-                        control.update()
-                elif isinstance(control, ft.Dropdown):
-                    control.value = str(val) if val is not None else ""
-                    if hasattr(control, '_Control__page') and control._Control__page is not None:
-                        control.update()
-                elif isinstance(control, ft.Checkbox):
-                    control.value = bool(val)
-                    if hasattr(control, '_Control__page') and control._Control__page is not None:
-                        control.update()
         update_controls(training_tab_container.config_page_content)
         update_controls(training_tab_container.sampling_page_content)
 
@@ -438,7 +398,10 @@ class TopBarUtils:
             num_workers_yaml = flat.get("num_dataloader_workers")
             if num_workers_yaml is not None and hasattr(dataset_page_content, 'set_num_workers'):
                 try:
-                    dataset_page_content.set_num_workers(num_workers_yaml, page_ctx)
+                    # Only call if the num_workers_field is attached to the page
+                    num_workers_field = getattr(dataset_page_content, 'num_workers_field_ref', None)
+                    if num_workers_field and hasattr(num_workers_field, 'current') and getattr(num_workers_field.current, 'page', None):
+                        dataset_page_content.set_num_workers(num_workers_yaml, page_ctx)
                 except Exception as e:
                     pass
             

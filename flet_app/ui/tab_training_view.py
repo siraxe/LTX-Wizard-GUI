@@ -45,11 +45,10 @@ def save_training_config_to_yaml(training_tab_container):
 
     InlineListDumper.represent_mapping = represent_mapping
     InlineListDumper.add_representer(list, custom_representer)
-    InlineListDumper.add_representer(TopBarUtils.QuotedString, TopBarUtils.quoted_presenter)
 
     with open(out_path, 'w', encoding='utf-8') as f:
         yaml.dump(
-            TopBarUtils.quote_all_strings(yaml_dict),
+            yaml_dict,
             f,
             sort_keys=False,
             allow_unicode=True,

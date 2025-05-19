@@ -43,7 +43,7 @@ def load_dataset_summary(dataset):
         try:
             with open(info_path, 'r') as f:
                 info = json.load(f)
-            total_frames = sum(v.get("frames", 0) for v in info.values())
+            total_frames = sum(v.get("frames", 0) for v in info.values() if isinstance(v, dict))
         except Exception:
             pass
     if os.path.exists(captions_path):
