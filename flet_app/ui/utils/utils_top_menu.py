@@ -128,31 +128,12 @@ class TopBarUtils:
                 'match_enabled': match_checkbox,
             }
         }
-        prompt_list = []
+        import csv
+        import io
         prompts_input = sampling.get('Prompts') or ''
-
-        # --- Revised logic to split prompts by commas and newlines, respecting quotes ---
-        # This regex finds segments which are either:
-        # 1. A quoted string: \"...\" allowing escaped quotes and other escaped characters inside.
-        #    \"(?:[^\"\\\\]|\\.)*\"  - Corrected escaping of backslash inside character set
-        # 2. Or, a sequence of characters that are not commas or newlines.
-        #    [^,\\n]+\
-        # It also handles potential whitespace and empty matches by filtering later.
-        matches = re.findall(r'\"(?:[^\"\\\\]|\\.)*\"|[^,\\n]+', prompts_input)
-
-        # Process the matches to strip whitespace and remove external quotes
-        prompt_list = []
-        for match in matches:
-            cleaned_prompt = match.strip()
-            if cleaned_prompt:
-                # If it\'s a quoted string from the regex match, remove the outer quotes
-                if cleaned_prompt.startswith('\"') and cleaned_prompt.endswith('\"'):
-                    cleaned_prompt = cleaned_prompt[1:-1]
-                    # Unescape escaped quotes and backslashes within the cleaned string
-                    cleaned_prompt = cleaned_prompt.replace('\\\"', '\"').replace('\\\\', '\\\\')
-                prompt_list.append(cleaned_prompt)
-        # --- End of Revised logic ---\
-
+        reader = csv.reader(io.StringIO(prompts_input), skipinitialspace=True)
+        prompt_list = next(reader, [])
+        prompt_list = [p.strip().strip('"') for p in prompt_list if p.strip()]
         yaml_dict['validation']['prompts'] = prompt_list
 
         return yaml_dict

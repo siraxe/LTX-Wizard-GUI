@@ -201,19 +201,30 @@ class DatasetPreprocessor:
             f"Results saved to [cyan]{output_base}[/]",
         )
 
-        # Write processed.json mapping video files to latent files
+        # Write processed.json mapping original video files (relative) to new latent file paths (relative)
         try:
-            # Get the dataset object from the dataloader
             dataset = dataloader.dataset
-            # Try to access .video_paths (should be a list of Path objects)
             video_paths = getattr(dataset, 'video_paths', None)
             if video_paths is not None:
                 processed_map = {}
                 for idx, video_path in enumerate(video_paths):
-                    # Use only the filename for mapping (or str(video_path.relative_to(data_root))) if needed
-                    video_key = video_path.name
-                    latent_file = f"latent_{idx:08d}.pt"
-                    processed_map[video_key] = latent_file
+                    # Use relative path from data_root for mapping
+                    try:
+                        video_key = str(video_path.relative_to(data_root))
+                    except Exception:
+                        video_key = str(video_path)
+                    # New latent file path: preserve folder structure and filename, .pt extension
+                    rel_path = video_path.with_suffix('.pt')
+                    # Always use <dataset-folder>/latents/<relative-path>.pt as the mapping value
+                    dataset_root = Path(data_root).resolve()
+                    dataset_folder = dataset_root.name
+                    try:
+                        relative_video = video_path.relative_to(dataset_root)
+                    except ValueError:
+                        # fallback: just use the filename
+                        relative_video = video_path.name
+                    latent_relative = Path(dataset_folder) / 'latents' / Path(relative_video).with_suffix('.pt')
+                    processed_map[video_key] = str(latent_relative.as_posix())
                 processed_json_path = output_base / "processed.json"
                 with open(processed_json_path, "w", encoding="utf-8") as f:
                     import json
@@ -305,8 +316,20 @@ class DatasetPreprocessor:
         # Save each item in the batch
         for i in range(len(batch["prompt"])):
             file_idx = batch_idx * batch_size + i
-            latent_path = latents_dir / f"latent_{file_idx:08d}.pt"
-            condition_path = conditions_dir / f"condition_{file_idx:08d}.pt"
+            # Get the original video path for this item
+            video_path = batch["video_path"][i] if "video_path" in batch else None
+            if video_path is not None:
+                # Use relative path and preserve folder structure and filename
+                from pathlib import Path
+                rel_path = Path(video_path).with_suffix('.pt')
+                latent_path = latents_dir / rel_path
+                condition_path = conditions_dir / rel_path
+                latent_path.parent.mkdir(parents=True, exist_ok=True)
+                condition_path.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                # Fallback to index-based naming if video_path is not provided
+                latent_path = latents_dir / f"latent_{file_idx:08d}.pt"
+                condition_path = conditions_dir / f"condition_{file_idx:08d}.pt"
 
             fps = batch["video_metadata"]["fps"][i].item()
             latent_item = {
@@ -345,13 +368,15 @@ class DatasetPreprocessor:
                 # For single frame (images), save as PNG, otherwise as MP4
                 is_image = video.shape[0] == 1
                 if is_image:
-                    output_path = decoded_dir / f"image_{file_idx:08d}.png"
+                    output_path = decoded_dir / rel_path.with_suffix(".png")
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
                     torchvision.utils.save_image(
                         video[0].permute(2, 0, 1) / 255.0,  # [H,W,C] -> [C,H,W] and normalize
                         str(output_path),
                     )
                 else:
-                    output_path = decoded_dir / f"video_{file_idx:08d}.mp4"
+                    output_path = decoded_dir / rel_path.with_suffix(".mp4")
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
                     torchvision.io.write_video(
                         str(output_path),
                         video.cpu(),

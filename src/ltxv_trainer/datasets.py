@@ -246,6 +246,7 @@ class ImageOrVideoDataset(Dataset):
                 "width": video.shape[3],
                 "fps": fps,
             },
+            "video_path": str(video_path.relative_to(self.data_root)),
         }
 
     def _load_dataset_from_local_path(self) -> tuple[list[str], list[Path]]:
@@ -553,9 +554,32 @@ class PrecomputedDataset(Dataset):
         if not list(self.conditions_path.iterdir()):
             raise ValueError(f"Precomputed conditions directory is empty: {self.conditions_path}")
 
-        self.latent_conditions = sorted([p.name for p in self.latents_path.iterdir()])
-        self.text_conditions = sorted([p.name for p in self.conditions_path.iterdir()])
+        # Recursively search for latent and embedding files in nested folders
+        latent_files = list(self.latents_path.glob("**/*.pt"))
+        if not latent_files:
+            raise ValueError(f"No latent files found in {self.latents_path}")
 
+        # For each latent file, find the corresponding text embedding file with the same relative path
+        self.latent_conditions = []
+        self.text_conditions = []
+        for latent_file in latent_files:
+            # Handle both old and new preprocessing script formats
+            rel_path = latent_file.relative_to(self.latents_path)
+            if latent_file.name.startswith("latent_"):
+                # Old format: latent_X.pt -> condition_X.pt
+                condition_file = self.conditions_path / f"condition_{latent_file.stem[7:]}.pt"
+            else:
+                # New format: same relative path in both directories
+                condition_file = self.conditions_path / rel_path
+            if condition_file.exists():
+                self.latent_conditions.append(rel_path)
+                self.text_conditions.append(condition_file.relative_to(self.conditions_path))
+            else:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"No matching condition file found for latent file: {latent_file.name}")
+        if not self.latent_conditions:
+            raise ValueError("No matching latent and condition files found.")
         assert len(self.latent_conditions) == len(self.text_conditions), "Number of captions and videos do not match"
 
     def __len__(self) -> int:
