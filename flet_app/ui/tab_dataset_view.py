@@ -156,6 +156,13 @@ bucket_size_textfield = create_textfield(
     expand=True
 )
 
+rename_textfield = create_textfield(
+    label="Rename all files",
+    value="",
+    hint_text="Name of videos + _num will be added",
+    expand=True,
+)
+
 MODEL_NAME_CHOICES = [
     "LTXV_2B_0.9.0",
     "LTXV_2B_0.9.1",
@@ -183,6 +190,140 @@ trigger_word_textfield = create_textfield(
 # =====================
 # GUI Event Handlers
 # =====================
+
+def on_rename_files_click(e: ft.ControlEvent):
+    """
+    Rename all video files in the selected dataset according to the rename_textfield value,
+    appending _01, _02, etc. Update captions.json and info.json if they exist.
+    Provide user feedback via snackbar.
+    """
+    current_dataset_name = selected_dataset.get("value")
+    if not current_dataset_name:
+        if e.page and e.page.client_storage:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text("Error: No dataset selected for renaming."), open=True)
+            e.page.update()
+        return
+
+    base_name = rename_textfield.value.strip()
+    if not base_name:
+        if e.page and e.page.client_storage:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text("Error: Enter a base name in the rename field."), open=True)
+            e.page.update()
+        return
+
+    dataset_folder_path = os.path.abspath(os.path.join(DATASETS_DIR, current_dataset_name))
+    video_exts = ['.mp4', '.mov', '.avi', '.webm', '.mkv']
+    video_files = [f for f in os.listdir(dataset_folder_path) if os.path.splitext(f)[1].lower() in video_exts]
+    video_files.sort()  # Ensure consistent order
+    if not video_files:
+        if e.page and e.page.client_storage:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text("No video files found to rename."), open=True)
+            e.page.update()
+        return
+
+    # Prepare new names and check for collisions
+    new_names = []
+    for idx, old_name in enumerate(video_files, 1):
+        ext = os.path.splitext(old_name)[1]
+        new_name = f"{base_name}_{idx:02d}{ext}"
+        new_names.append(new_name)
+    if len(set(new_names)) != len(new_names):
+        if e.page and e.page.client_storage:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text("Naming collision detected. Aborting."), open=True)
+            e.page.update()
+        return
+    # Ensure no existing file will be overwritten
+    for new_name in new_names:
+        if new_name in video_files:
+            if e.page and e.page.client_storage:
+                e.page.snack_bar = ft.SnackBar(content=ft.Text(f"File {new_name} already exists. Aborting."), open=True)
+                e.page.update()
+            return
+
+    # Rename files
+    old_to_new = {}
+    for old_name, new_name in zip(video_files, new_names):
+        old_path = os.path.join(dataset_folder_path, old_name)
+        new_path = os.path.join(dataset_folder_path, new_name)
+        try:
+            os.rename(old_path, new_path)
+            old_to_new[old_name] = new_name
+        except Exception as ex:
+            if e.page and e.page.client_storage:
+                e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Failed to rename {old_name}: {ex}"), open=True)
+                e.page.update()
+            return
+
+    # Update captions.json if exists
+    captions_path = os.path.join(dataset_folder_path, "captions.json")
+    if os.path.exists(captions_path):
+        try:
+            with open(captions_path, "r", encoding="utf-8") as f:
+                captions_data = json.load(f)
+            changed = False
+            # Update filename fields in-place (never duplicate entries)
+            for entry in captions_data:
+                for field in ("media_path", "video"):
+                    if field in entry and entry[field] in old_to_new:
+                        entry[field] = old_to_new[entry[field]]
+                        changed = True
+            if changed:
+                with open(captions_path, "w", encoding="utf-8") as f:
+                    json.dump(captions_data, f, indent=2, ensure_ascii=False)
+        except Exception as ex:
+            if e.page and e.page.client_storage:
+                e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Failed to update captions.json: {ex}"), open=True)
+                e.page.update()
+            return
+
+    # Update info.json if exists (rename keys, preserve values, never duplicate)
+    info_path = os.path.join(dataset_folder_path, "info.json")
+    if os.path.exists(info_path):
+        try:
+            with open(info_path, "r", encoding="utf-8") as f:
+                info_data = json.load(f)
+            changed = False
+            # If info_data is a dict with video filename keys, rename keys
+            if isinstance(info_data, dict):
+                new_info_data = {}
+                for k, v in info_data.items():
+                    new_key = old_to_new.get(k, k)
+                    new_info_data[new_key] = v
+                    if new_key != k:
+                        changed = True
+                info_data = new_info_data
+            else:
+                # If not a dict, fallback to recursive update (legacy)
+                def update_dict(d):
+                    nonlocal changed
+                    for k, v in d.items():
+                        if isinstance(v, str) and v in old_to_new:
+                            d[k] = old_to_new[v]
+                            changed = True
+                        elif isinstance(v, list):
+                            for i, item in enumerate(v):
+                                if isinstance(item, str) and item in old_to_new:
+                                    v[i] = old_to_new[item]
+                                    changed = True
+                                elif isinstance(item, dict):
+                                    update_dict(item)
+                        elif isinstance(v, dict):
+                            update_dict(v)
+                update_dict(info_data)
+            if changed:
+                with open(info_path, "w", encoding="utf-8") as f:
+                    json.dump(info_data, f, indent=4, ensure_ascii=False)
+        except Exception as ex:
+            if e.page and e.page.client_storage:
+                e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Failed to update info.json: {ex}"), open=True)
+                e.page.update()
+            return
+
+    # Success feedback and UI update
+    if e.page and e.page.client_storage:
+        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Renamed {len(video_files)} files successfully."), open=True)
+        update_thumbnails(page_ctx=e.page, grid_control=thumbnails_grid_ref.current)
+        e.page.update()
 
 def on_bucket_or_model_change(e: ft.ControlEvent):
     """Handle changes to bucket size or model name controls."""
@@ -667,6 +808,17 @@ def dataset_tab_layout(page=None):
             ft.Text("3. Test latent (optional)", size=12),
             ft.Divider(height=1, thickness=1),
             ft.Text("Test here", size=12),
+        ]),
+        ft.Container(height=10),
+        ft.Column([
+            ft.Text("Rename files", size=12),
+            ft.Divider(height=1, thickness=1),
+            rename_textfield,
+            create_styled_button("Rename files",
+                                    on_click=on_rename_files_click,
+                                    tooltip="Rename files",
+                                    expand=True,
+                                    button_style=BTN_STYLE2)
         ])
     ], spacing=10, width=200, alignment=ft.MainAxisAlignment.START)
     bottom_app_bar = ft.BottomAppBar(

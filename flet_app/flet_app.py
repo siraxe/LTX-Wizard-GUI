@@ -18,33 +18,6 @@ def refresh_menu_bar(page, menu_bar_column):
     menu_bar_column.controls.append(new_menu_bar)
     menu_bar_column.update()
 
-# def handle_global_keyboard_event(page, e):
-#     """Handles global keyboard shortcuts and dialog hotkeys."""
-#     # If the video dialog is open and has a handler, call it
-#     if getattr(page, 'video_dialog_open', False) and getattr(page, 'video_dialog_hotkey_handler', None):
-#         page.video_dialog_hotkey_handler(e)
-#         return
-#     # Esc key closes base dialog if open
-#     if hasattr(e, 'key') and e.key == 'Escape':
-#         if hasattr(page, 'base_dialog') and getattr(page.base_dialog, 'visible', False):
-#             page.base_dialog.hide_dialog()
-#             return
-#     # Global hotkeys for menu actions
-#     if hasattr(e, 'ctrl') and e.ctrl:
-#         # Ctrl+Shift+S (Save As)
-#         if hasattr(e, 'shift') and e.shift and hasattr(e, 'key') and e.key.lower() == 's':
-#             TopBarUtils.handle_save_as(page)
-#         # Ctrl+S (Save)
-#         elif hasattr(e, 'key') and e.key.lower() == 's':
-#             TopBarUtils.handle_save(page)
-#         # Ctrl+O (Open)
-#         elif hasattr(e, 'key') and e.key.lower() == 'o':
-#             TopBarUtils.handle_open(page)
-#         # Ctrl+F (Open Base Dialog)
-#         elif hasattr(e, 'key') and e.key.lower() == 'f':
-#             if hasattr(page, 'base_dialog'):
-#                 page.base_dialog.show_dialog()
-
 # =====================
 # GUI-Building Functions
 # =====================
