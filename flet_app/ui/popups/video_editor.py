@@ -222,11 +222,15 @@ def handle_crop_video_click(page: ft.Page, width_field, height_field, current_vi
     ffmpeg_output_path = os.path.join(temp_output_dir, f"ffmpeg_cropped_{os.path.basename(current_video_path)}")
     input_abs_path = os.path.abspath(current_video_path)
     output_abs_path = os.path.abspath(ffmpeg_output_path)
-    # Use crop filter instead of scale to crop the center of the video
-    crop_filter = f"crop={target_width}:{target_height}"
+    # First scale to fit within target dimensions (preserve aspect), then crop center to target size
+    # This ensures the result always fills the box without stretching
+    scale_crop_filter = (
+        f"scale='if(gt(a,{target_width}/{target_height}),{target_width},-1)':'if(gt(a,{target_width}/{target_height}),-1,{target_height})',"
+        f"crop={target_width}:{target_height}"
+    )
     cmd_list = [
         ffmpeg_exe, "-y", "-i", input_abs_path,
-        "-vf", crop_filter,
+        "-vf", scale_crop_filter,
         "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
         output_abs_path
     ]
