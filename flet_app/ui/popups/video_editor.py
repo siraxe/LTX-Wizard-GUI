@@ -313,7 +313,7 @@ def handle_crop_video_click(page: ft.Page, width_field, height_field, current_vi
             open_video_captions_dialog(page, current_video_path, [current_video_path])
             # Update thumbnails for the dataset if possible
             if dataset_name and thumbnails_grid_ref.current:
-                update_thumbnails(page_ctx=page, grid_control=thumbnails_grid_ref.current)
+                update_thumbnails(page_ctx=page, grid_control=thumbnails_grid_ref.current, force_refresh=True)
                 thumbnails_grid_ref.current.update()
                 page.update()
         except Exception as e:

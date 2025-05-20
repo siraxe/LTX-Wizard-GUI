@@ -380,8 +380,8 @@ def on_preprocess_dataset_click(e: ft.ControlEvent):
 # GUI Update/Utility Functions
 # =====================
 
-def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None):
-    """Update the thumbnails grid for the selected dataset."""
+def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None, force_refresh: bool = False):
+    """Update the thumbnails grid for the selected dataset. If force_refresh is True, use cache-busting temp files."""
     if not grid_control:
         return
     current_selection = selected_dataset["value"]
@@ -407,11 +407,19 @@ def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None
                 grid_control.controls.append(
                     ft.Container(
                         content=ft.Column([
-                            # Cache-busting: copy thumbnail to a temp file with a unique name
-                            (lambda _src: ft.Image(src=_src, width=THUMB_TARGET_W, height=THUMB_TARGET_H, fit=ft.ImageFit.COVER, border_radius=ft.border_radius.all(5)))((
-                                __import__('shutil').copy2(thumb_path, thumb_path + f'.tmp_{int(__import__("time").time())}.jpg')
-                                or thumb_path + f'.tmp_{int(__import__("time").time())}.jpg'
-                            ) if thumb_path and os.path.exists(thumb_path) else thumb_path),
+                            # Only use cache-busting temp files if force_refresh is True
+                            ft.Image(
+                                src=(
+                                    (
+                                        __import__('shutil').copy2(thumb_path, thumb_path + f'.tmp_{int(__import__("time").time())}.jpg')
+                                        or thumb_path + f'.tmp_{int(__import__("time").time())}.jpg'
+                                    ) if force_refresh and thumb_path and os.path.exists(thumb_path) else thumb_path
+                                ),
+                                width=THUMB_TARGET_W,
+                                height=THUMB_TARGET_H,
+                                fit=ft.ImageFit.COVER,
+                                border_radius=ft.border_radius.all(5)
+                            ),
                             ft.Text(spans=[
                                 ft.TextSpan("[cap - ", style=ft.TextStyle(color=ft.Colors.GREY_500, size=10)),
                                 ft.TextSpan(cap_val, style=ft.TextStyle(color=cap_color, size=10)),

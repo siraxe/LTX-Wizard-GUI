@@ -155,17 +155,9 @@ def get_videos_and_thumbnails(dataset_name):
                 # print(f"Error extracting info for {video_name}: {e}")
                 pass
                 
-        # Always regenerate thumbnail to ensure freshness
-        if os.path.exists(thumbnail_path):
-            try:
-                os.remove(thumbnail_path)
-            except Exception as e:
-                pass
-        if generate_thumbnail(video_path, thumbnail_path):
-            pass # Successfully generated
-        else:
-            # print(f"Failed to generate thumbnail for {video_path}")
-            pass
+        # Only generate thumbnail if it does not exist
+        if not os.path.exists(thumbnail_path):
+            generate_thumbnail(video_path, thumbnail_path)
 
         if os.path.exists(thumbnail_path):
             thumbnail_paths[video_path] = thumbnail_path
