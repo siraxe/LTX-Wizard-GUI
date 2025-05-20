@@ -654,11 +654,13 @@ def reload_current_dataset(p_page: ft.Page | None, current_dataset_dropdown: ft.
             p_page.snack_bar.open = True
 
 # =====================
-# Async Task Runner
+# Async Task Runner & Process State
 # =====================
 
+current_caption_process = {"proc": None}  # Track running process for stop functionality
+
 async def run_dataset_script_command(command_str: str, page_ref: ft.Page, button_ref: ft.ElevatedButton, progress_bar_ref: ft.ProgressBar, output_field_ref: ft.TextField, original_button_text: str, on_success_callback=None):
-    """Run a dataset script command asynchronously and update UI with output."""
+    """Run a dataset script command asynchronously and update UI with output. Supports stopping."""
     def append_output(text):
         output_field_ref.value += text
         output_field_ref.visible = True
@@ -680,10 +682,12 @@ async def run_dataset_script_command(command_str: str, page_ref: ft.Page, button
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT
         )
+        current_caption_process["proc"] = process
         assert process.stdout is not None
         async for line in process.stdout:
             append_output(line.decode(errors='replace'))
         rc = await process.wait()
+        current_caption_process["proc"] = None
         if rc == 0:
             if page_ref.client_storage:
                 page_ref.snack_bar = ft.SnackBar(content=ft.Text(f"Script successful: {output_field_ref.value[:50]}..."), open=True)
@@ -698,11 +702,13 @@ async def run_dataset_script_command(command_str: str, page_ref: ft.Page, button
         if page_ref.client_storage:
             page_ref.snack_bar = ft.SnackBar(content=ft.Text(f"Cmd failed: {e}"), open=True)
     finally:
+        current_caption_process["proc"] = None
         button_ref.text = original_button_text
         button_ref.disabled = False
         progress_bar_ref.visible = False
         if page_ref.client_storage:
             page_ref.update()
+
 
 # =====================
 # Global State
@@ -755,12 +761,120 @@ def dataset_tab_layout(page=None):
         on_click=lambda e: on_update_button_click(e, dataset_dropdown_control, thumbnails_grid_control),
         style=ft.ButtonStyle(padding=ft.padding.symmetric(horizontal=8)), icon_size=20
     )
+    # Dropdown for selecting captioning model
+    CAPTION_MODEL_CHOICES = {
+        "qwen_25_vl": "Qwen2.5-VL-7B",
+        "llava_next_7b": "LLaVA-NeXT-7B"
+    }
+    caption_model_dropdown = create_dropdown(
+        "Captioning Model", "llava_next_7b",  # default
+        CAPTION_MODEL_CHOICES,
+        "Select a captioning model",
+        expand=True,col=9,
+    )
+    captions_checkbox = ft.Checkbox(
+            label="8-bit", value=True,scale=1,
+            visible=False,
+            left="left",
+            expand=True,
+    )
+    captions_checkbox_c = ft.Container(captions_checkbox,
+            expand=True,col=3,scale=0.8,
+            alignment=ft.alignment.bottom_center,    # Align to bottom
+            margin=ft.margin.only(top=10)
+    )
+
+
+    def on_caption_model_change(ev):
+        if caption_model_dropdown.value == "qwen_25_vl":
+            captions_checkbox.visible = True
+        else:
+            captions_checkbox.visible = False
+        if hasattr(ev, 'page') and ev.page:
+            ev.page.update()
+
+    caption_model_dropdown.on_change = on_caption_model_change
+
+    import signal
+
+    def stop_captioning(e, button, thumbnails_grid_control):
+        # Try to kill by PID file
+        pid_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../scripts/caption_pid.txt')
+        killed = False
+        if os.path.exists(pid_file):
+            try:
+                with open(pid_file, 'r') as f:
+                    pid = int(f.read().strip())
+                # Try to kill the process
+                os.kill(pid, signal.SIGTERM)
+                killed = True
+            except Exception:
+                pass
+            try:
+                os.remove(pid_file)
+            except Exception:
+                pass
+        # Fallback to killing the tracked process tree if PID file failed
+        if not killed:
+            proc = current_caption_process.get("proc")
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                current_caption_process["proc"] = None
+        # Restore Delete button
+        dataset_delete_captions_button_control.text = "Delete"
+        dataset_delete_captions_button_control.on_click = lambda evt: on_delete_captions_click(evt, thumbnails_grid_control)
+        dataset_delete_captions_button_control.tooltip = "Delete the captions.json file"
+        dataset_delete_captions_button_control.disabled = False
+        dataset_delete_captions_button_control.update()
+        processed_progress_bar.visible = False
+        processed_output_field.value += "Stopped\n"
+        processed_output_field.update()
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text("Captioning stopped."), open=True)
+            e.page.update()
+
+    def on_add_captions_click_with_model(e, thumbnails_grid_control=thumbnails_grid_control):
+        # If a process is running, treat as stop
+        proc = current_caption_process.get("proc")
+        if proc is not None and proc.returncode is None:
+            stop_captioning(e, dataset_add_captions_button_control, thumbnails_grid_control)
+            return
+        selected_model = caption_model_dropdown.value or "qwen_25_vl"
+        current_dataset_name = selected_dataset.get("value")
+        if not current_dataset_name:
+            if e.page and e.page.client_storage:
+                e.page.snack_bar = ft.SnackBar(content=ft.Text("Error: No dataset selected."), open=True)
+                e.page.update()
+            return
+        dataset_folder_path = os.path.abspath(os.path.join(DATASETS_DIR, current_dataset_name))
+        output_json_path = os.path.join(dataset_folder_path, "captions.json")
+        python_exe = os.path.normpath(os.path.join("venv", "Scripts", "python.exe"))
+        script_file = os.path.normpath("scripts/caption_videos.py")
+        command = f'"{python_exe}" "{script_file}" "{dataset_folder_path}/" --output "{output_json_path}" --captioner-type {selected_model}'
+        # Add --use-8bit if Qwen model and checkbox is checked
+        if selected_model == "qwen_25_vl" and captions_checkbox.value:
+            command += " --use-8bit"
+        # Change Delete button to Stop
+        dataset_delete_captions_button_control.text = "Stop"
+        dataset_delete_captions_button_control.on_click = lambda evt: stop_captioning(evt, dataset_delete_captions_button_control, thumbnails_grid_control)
+        dataset_delete_captions_button_control.tooltip = "Stop captioning process"
+        dataset_delete_captions_button_control.disabled = False
+        dataset_delete_captions_button_control.update()
+        if e.page:
+            e.page.update()
+            e.page.run_task(run_dataset_script_command, command, e.page, dataset_add_captions_button_control, processed_progress_bar, processed_output_field, "Add Captions", on_success_callback=lambda: update_thumbnails(page_ctx=e.page, grid_control=thumbnails_grid_control))
+
     dataset_add_captions_button_control = create_styled_button(
         "Add Captions",
-        on_click=lambda e: on_add_captions_click(e, thumbnails_grid_control),
-        tooltip="Generate captions for videos",
-        expand=False,
-        button_style=BTN_STYLE2
+        on_click=on_add_captions_click_with_model,
+        button_style=BTN_STYLE2,
+        expand=True
     )
     dataset_delete_captions_button_control = create_styled_button(
         "Delete",
@@ -790,6 +904,7 @@ def dataset_tab_layout(page=None):
         ]),
         ft.Text("1. Captions", size=12),
         ft.Divider(height=1, thickness=1),
+        ft.ResponsiveRow([captions_checkbox_c,caption_model_dropdown]),
         ft.Row([
             ft.Container(content=dataset_add_captions_button_control, expand=True),
             ft.Container(content=dataset_delete_captions_button_control, expand=True)

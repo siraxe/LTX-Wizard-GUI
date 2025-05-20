@@ -6,7 +6,12 @@ from typing import Union
 
 import torch
 from diffusers import BitsAndBytesConfig
-from transformers import AutoModel, AutoProcessor, LlavaNextVideoForConditionalGeneration
+from transformers import (
+    AutoModel,
+    AutoProcessor,
+    LlavaNextVideoForConditionalGeneration,
+    Qwen2_5_VLForConditionalGeneration,
+)
 import numpy as np
 
 # Should be imported after `torch` to avoid compatibility issues.import decord
@@ -22,6 +27,7 @@ class CaptionerType(str, Enum):
     """Enum for different types of video captioners."""
 
     LLAVA_NEXT_7B = "llava_next_7b"
+    QWEN_25_VL = "qwen_25_vl"
 
 
 def create_captioner(
@@ -43,6 +49,12 @@ def create_captioner(
         return TransformersVlmCaptioner(
             model_id="llava-hf/LLaVA-NeXT-Video-7B-hf",
             models_dir=models_dir,  # Pass models_dir
+            **kwargs,
+        )
+    elif captioner_type == CaptionerType.QWEN_25_VL:
+        return TransformersVlmCaptioner(
+            model_id="Qwen/Qwen2.5-VL-7B-Instruct",
+            models_dir=models_dir,
             **kwargs,
         )
     else:
@@ -118,6 +130,7 @@ class TransformersVlmCaptioner(MediaCaptioningModel):
             vlm_instruction: The instruction prompt for the VLM.
         """
         self.device = torch.device(device or "cuda" if torch.cuda.is_available() else "cpu")
+        print(f"[DEBUG] torch.cuda.is_available(): {torch.cuda.is_available()}")
         self.vlm_instruction = vlm_instruction
         self.models_dir = Path(models_dir)  # Store as Path object
         self._load_model(model_id, use_8bit=use_8bit, models_dir=self.models_dir) # Pass models_dir
@@ -144,6 +157,40 @@ class TransformersVlmCaptioner(MediaCaptioningModel):
 
         # Read input file
         media = self._read_image(path) if is_image else self._read_video_frames(path, frames_sampling_factor)
+        # DEBUG: Print shape and dtype of loaded media
+        import os
+        debug_log_path = os.path.join(os.path.dirname(__file__), "media_shape_debug.log")
+        if hasattr(media, 'shape'):
+            debug_msg = f"[DEBUG] Loaded media shape: {media.shape}, dtype: {media.dtype}, is_image: {is_image}"
+            print(debug_msg)
+            try:
+                with open(debug_log_path, "a", encoding="utf-8") as dbg_file:
+                    dbg_file.write(debug_msg + "\n")
+            except Exception as e:
+                print(f"[DEBUG] Failed to write debug log: {e}")
+        else:
+            debug_msg = f"[DEBUG] Loaded media type: {type(media)}, is_image: {is_image}"
+            print(debug_msg)
+            try:
+                with open(debug_log_path, "a", encoding="utf-8") as dbg_file:
+                    dbg_file.write(debug_msg + "\n")
+            except Exception as e:
+                print(f"[DEBUG] Failed to write debug log: {e}")
+
+        # Permute video tensor for Qwen models only ([N, H, W, C] -> [N, C, H, W])
+        is_qwen = hasattr(self, "model") and (
+    "Qwen" in type(self.model).__name__ or
+    "Qwen" in getattr(getattr(self.model, "config", None), "_name_or_path", "")
+)
+        if (not is_image and is_qwen and hasattr(media, 'shape') and len(media.shape) == 4 and media.shape[-1] == 3):
+            media = media.permute(0, 3, 1, 2).contiguous()
+            debug_msg = f"[DEBUG] Permuted media for Qwen: new shape {media.shape}, dtype: {media.dtype}"
+            print(debug_msg)
+            try:
+                with open(debug_log_path, "a", encoding="utf-8") as dbg_file:
+                    dbg_file.write(debug_msg + "\n")
+            except Exception as e:
+                print(f"[DEBUG] Failed to write debug log: {e}")
         # Prepare inputs
         conversation = [
             {
@@ -162,12 +209,44 @@ class TransformersVlmCaptioner(MediaCaptioningModel):
             images=media if is_image else None,
             padding=True,
             return_tensors="pt",
-        ).to(self.device)
+        )
+        # Robust device handling: move all tensors in the inputs to self.device for LLaVA
+        is_qwen = hasattr(self, "model") and (
+            "Qwen" in type(self.model).__name__ or
+            "Qwen" in getattr(getattr(self.model, "config", None), "_name_or_path", "")
+        )
+        if not is_qwen:
+            for k, v in inputs.items():
+                if hasattr(v, "to"):
+                    inputs[k] = v.to(self.device)
+        else:
+            # For Qwen, keep current logic (already handled above)
+            inputs = inputs.to(self.device)
 
         # Generate caption
-        output_tokens = self.model.generate(**inputs, max_new_tokens=200, do_sample=False)
-        output = self.processor.decode(output_tokens[0], skip_special_tokens=True)
-        caption_raw = output.split("ASSISTANT: ")[1]
+        output_tokens = self.model.generate(
+            **inputs,
+            max_new_tokens=200,
+            do_sample=False,
+            temperature=None,
+        )
+
+        # Trim the generated tokens to exclude the input tokens
+        output_tokens_trimmed = [
+            out_ids[len(in_ids) :]
+            for in_ids, out_ids in zip(
+                inputs.input_ids,
+                output_tokens,
+                strict=False,
+            )
+        ]
+
+        # Decode the generated tokens to text
+        caption_raw = self.processor.batch_decode(
+            output_tokens_trimmed,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )[0]
 
         # Clean up caption
         caption = self._clean_raw_caption(caption_raw) if clean_caption else caption_raw
@@ -179,9 +258,10 @@ class TransformersVlmCaptioner(MediaCaptioningModel):
 
         if model_id == "llava-hf/LLaVA-NeXT-Video-7B-hf":
             model_cls = LlavaNextVideoForConditionalGeneration
+        elif "Qwen" in model_id:
+            from transformers import Qwen2_5_VLForConditionalGeneration
+            model_cls = Qwen2_5_VLForConditionalGeneration
         else:
-            # For other models, ensure their specific class is used or AutoModelForConditionalGeneration
-            # For now, this follows the original logic for non-LLAVA IDs.
             model_cls = AutoModel
 
         quantization_config = BitsAndBytesConfig(load_in_8bit=True) if use_8bit else None
@@ -197,7 +277,10 @@ class TransformersVlmCaptioner(MediaCaptioningModel):
                     quantization_config=quantization_config,
                     device_map=self.device.type,
                 )
-                self.processor = AutoProcessor.from_pretrained(local_model_path)
+                if not use_8bit:
+                    self.model.to(self.device)  # Only move if not 8-bit
+                # Set use_fast=True for processor as recommended by transformers >=4.52
+                self.processor = AutoProcessor.from_pretrained(local_model_path, use_fast=True)
                 print(f"Successfully loaded model and processor from {local_model_path}")  # noqa: T201
                 return  # Successfully loaded
             except Exception as e:
@@ -216,7 +299,10 @@ class TransformersVlmCaptioner(MediaCaptioningModel):
                 quantization_config=quantization_config,
                 device_map=self.device.type,
             )
-            self.processor = AutoProcessor.from_pretrained(model_id)
+            if not use_8bit:
+                self.model.to(self.device)  # Only move if not 8-bit
+            # Set use_fast=True for processor as recommended by transformers >=4.52
+            self.processor = AutoProcessor.from_pretrained(model_id, use_fast=True)
             print(f"Successfully downloaded '{model_id}'.")  # noqa: T201
 
             # Save the downloaded model and processor to the local path for future use

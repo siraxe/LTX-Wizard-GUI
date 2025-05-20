@@ -31,8 +31,17 @@ Advanced usage:
 
 import csv
 import json
+import os
 from enum import Enum
 from pathlib import Path
+
+# --- Write PID to file for external process tracking ---
+try:
+    pid_file = os.path.join(os.path.dirname(__file__), 'caption_pid.txt')
+    with open(pid_file, 'w') as f:
+        f.write(str(os.getpid()))
+except Exception:
+    pass
 
 import torch
 import typer
@@ -388,10 +397,11 @@ def main(  # noqa: PLR0913
         help="Path to output file for captions. Format determined by file extension.",
     ),
     captioner_type: CaptionerType = typer.Option(  # noqa: B008
-        CaptionerType.LLAVA_NEXT_7B,
+        CaptionerType.QWEN_25_VL,
         "--captioner-type",
         "-c",
-        help="Type of captioner to use",
+        help="Type of captioner to use. Valid values: 'llava_next_7b', 'qwen_25_vl'",
+        case_sensitive=False,
     ),
     device: str | None = typer.Option(
         None,

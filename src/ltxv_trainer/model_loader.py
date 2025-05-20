@@ -44,7 +44,7 @@ class LtxvModelVersion(str, Enum):
     @classmethod
     def latest(cls) -> "LtxvModelVersion":
         """Get the latest available version."""
-        return cls.LTXV_2B_095
+        return cls.LTXV_13B_097_DISTILLED
 
     @property
     def hf_repo(self) -> str:
