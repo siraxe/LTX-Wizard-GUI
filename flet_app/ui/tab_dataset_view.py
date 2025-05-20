@@ -659,7 +659,7 @@ def reload_current_dataset(p_page: ft.Page | None, current_dataset_dropdown: ft.
 
 current_caption_process = {"proc": None}  # Track running process for stop functionality
 
-async def run_dataset_script_command(command_str: str, page_ref: ft.Page, button_ref: ft.ElevatedButton, progress_bar_ref: ft.ProgressBar, output_field_ref: ft.TextField, original_button_text: str, on_success_callback=None):
+async def run_dataset_script_command(command_str: str, page_ref: ft.Page, button_ref: ft.ElevatedButton, progress_bar_ref: ft.ProgressBar, output_field_ref: ft.TextField, original_button_text: str, delete_button_ref=None, thumbnails_grid_control=None, on_success_callback=None):
     """Run a dataset script command asynchronously and update UI with output. Supports stopping."""
     def append_output(text):
         output_field_ref.value += text
@@ -706,6 +706,13 @@ async def run_dataset_script_command(command_str: str, page_ref: ft.Page, button
         button_ref.text = original_button_text
         button_ref.disabled = False
         progress_bar_ref.visible = False
+        # --- Restore Delete button after captioning completes or fails ---
+        if delete_button_ref is not None and thumbnails_grid_control is not None:
+            delete_button_ref.text = "Delete"
+            delete_button_ref.on_click = lambda evt: on_delete_captions_click(evt, thumbnails_grid_control)
+            delete_button_ref.tooltip = "Delete the captions.json file"
+            delete_button_ref.disabled = False
+            delete_button_ref.update()
         if page_ref.client_storage:
             page_ref.update()
 
@@ -868,7 +875,7 @@ def dataset_tab_layout(page=None):
         dataset_delete_captions_button_control.update()
         if e.page:
             e.page.update()
-            e.page.run_task(run_dataset_script_command, command, e.page, dataset_add_captions_button_control, processed_progress_bar, processed_output_field, "Add Captions", on_success_callback=lambda: update_thumbnails(page_ctx=e.page, grid_control=thumbnails_grid_control))
+            e.page.run_task(run_dataset_script_command, command, e.page, dataset_add_captions_button_control, processed_progress_bar, processed_output_field, "Add Captions", delete_button_ref=dataset_delete_captions_button_control, thumbnails_grid_control=thumbnails_grid_control, on_success_callback=lambda: update_thumbnails(page_ctx=e.page, grid_control=thumbnails_grid_control))
 
     dataset_add_captions_button_control = create_styled_button(
         "Add Captions",
