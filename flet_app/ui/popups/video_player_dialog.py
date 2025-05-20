@@ -90,6 +90,7 @@ _current_video_path_for_dialog = ""
 _last_video_loading_path = ""
 _active_width_field_instance = None
 _active_height_field_instance = None
+_video_is_playing = [False]  # Global play/pause state, always a list for mutability
 
 # === GUI-Building Functions ===
 def _video_on_completed(e):
@@ -141,6 +142,7 @@ def _hide_feedback_overlay(stack):
 
 def build_video_player(video_path: str, autoplay: bool = False):
     """Create and return a Video player control for the given video path, wrapped in a clickable Container with play/pause feedback."""
+    global _video_feedback_overlay, _video_is_playing
     video = Video(
         playlist=[VideoMedia(resource=video_path)],
         autoplay=autoplay,
@@ -162,11 +164,10 @@ def build_video_player(video_path: str, autoplay: bool = False):
         expand=False,
         animate_opacity=300
     )
-    global _video_feedback_overlay
     _video_feedback_overlay = feedback_overlay
 
-    # Track play/pause state manually
-    _video_is_playing = [autoplay]  # Use list for mutability in closure
+    # Track play/pause state globally
+    _video_is_playing[0] = autoplay
 
     def show_feedback(is_playing):
         icon = ft.Icons.PAUSE if is_playing else ft.Icons.PLAY_ARROW
@@ -174,6 +175,7 @@ def build_video_player(video_path: str, autoplay: bool = False):
         _show_video_feedback_icon(stack, icon, color)
 
     def play_or_pause_with_feedback():
+        global _video_is_playing
         # Toggle our state
         _video_is_playing[0] = not _video_is_playing[0]
         orig_play_or_pause()
