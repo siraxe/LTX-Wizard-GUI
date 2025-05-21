@@ -907,7 +907,6 @@ def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None
                         temp_thumb_path = os.path.join(os.path.dirname(thumb_path), temp_thumb_name)
                         __import__('shutil').copy2(thumb_path, temp_thumb_path)
                         image_src = temp_thumb_path
-                        print(f"Using temp thumbnail: {image_src}") # Debug
                      except Exception as e:
                          print(f"Error creating temp thumbnail for {thumb_path}: {e}") # Debug
                          image_src = thumb_path # Fallback if temp creation fails

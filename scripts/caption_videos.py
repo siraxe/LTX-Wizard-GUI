@@ -92,10 +92,11 @@ def caption_media(
     captioner: MediaCaptioningModel,
     extensions: list[str],
     recursive: bool,
-    frames_sampling_factor: int,
+    fps: int,
     clean_caption: bool,
     output_format: OutputFormat,
     override: bool,
+    max_new_tokens: int,
 ) -> None:
     """Caption videos and images using the provided captioning model.
     Args:
@@ -104,7 +105,7 @@ def caption_media(
         captioner: Video captioning model
         extensions: List of video file extensions to include
         recursive: Whether to search subdirectories recursively
-        frames_sampling_factor: Factor to sample frames from videos
+        fps: Frames per second to sample from videos
         clean_caption: Whether to clean up captions
         output_format: Format to save the captions in
         override: Whether to override existing captions
@@ -179,14 +180,16 @@ def caption_media(
                 # Generate caption for the media
                 caption = captioner.caption(
                     path=media_file,
-                    frames_sampling_factor=frames_sampling_factor,
+                    fps=fps,
                     clean_caption=clean_caption,
+                    max_new_tokens=max_new_tokens,
                 )
 
                 # Convert absolute path to relative path (relative to the output file's directory)
                 rel_path = str(media_file.resolve().relative_to(base_dir))
                 # Store the caption with the relative path as key
                 captions[rel_path] = caption
+                print(f"Added caption for {media_file.name}")
 
             except Exception as e:
                 console.print(f"[bold red]Error captioning [bold blue]{media_file}[/]: {e}[/]")
@@ -432,11 +435,26 @@ def main(  # noqa: PLR0913
         "-r",
         help="Search for media files in subdirectories recursively",
     ),
-    frames_sampling_factor: int = typer.Option(
-        8,
-        "--frames-sampling-factor",
+    max_new_tokens: int = typer.Option(
+        100,
+        "--max-new-tokens",
+        help="Maximum new tokens to generate for the caption.",
+    ),
+    fps: int = typer.Option(
+        3,
+        "--fps",
         "-f",
-        help="Factor to sample frames from media (higher means fewer frames)",
+        help="Frames per second to sample from videos (ignored for images)",
+    ),
+    llava_model_id_or_path: str = typer.Option(
+        "llava-hf/LLaVA-NeXT-Video-7B-hf",
+        "--llava-model",
+        help="LLaVA model ID or local path (e.g., models/LLaVA-NeXT-Video-7B-hf or llava-hf/LLaVA-NeXT-Video-7B-hf)."
+    ),
+    qwen_model_id_or_path: str = typer.Option(
+        "Qwen/Qwen2.5-VL-7B-Instruct",
+        "--qwen-model",
+        help="Qwen model ID or local path (e.g., models/Qwen2.5-VL-7B-Instruct or Qwen/Qwen2.5-VL-7B-Instruct)."
     ),
     clean_caption: bool = typer.Option(
         True,
@@ -485,6 +503,8 @@ def main(  # noqa: PLR0913
             device=device,
             use_8bit=use_8bit,
             vlm_instruction=instruction,
+            llava_model_id_or_path=llava_model_id_or_path,
+            qwen_model_id_or_path=qwen_model_id_or_path,
         )
         console.print("[bold green]✓[/] Captioning model loaded successfully")
 
@@ -495,10 +515,11 @@ def main(  # noqa: PLR0913
         captioner=captioner,
         extensions=ext_list,
         recursive=recursive,
-        frames_sampling_factor=frames_sampling_factor,
+        fps=fps,
         clean_caption=clean_caption,
         output_format=output_format,
         override=override,
+        max_new_tokens=max_new_tokens,
     )
 
 

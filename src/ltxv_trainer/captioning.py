@@ -1,27 +1,25 @@
-import itertools  # noqa: I001
-from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
-from typing import Union
+from typing import Protocol, Union
 
 import torch
-from diffusers import BitsAndBytesConfig
 from transformers import (
-    AutoModel,
     AutoProcessor,
+    BitsAndBytesConfig,
     LlavaNextVideoForConditionalGeneration,
     Qwen2_5_VLForConditionalGeneration,
 )
 import numpy as np
-
-# Should be imported after `torch` to avoid compatibility issues.import decord
-import decord  # type: ignore
-from ltxv_trainer.utils import open_image_as_srgb
+import imageio.v3 as iio
+import decord
+from huggingface_hub import snapshot_download
+from huggingface_hub.utils import HFValidationError
 
 decord.bridge.set_bridge("torch")
 
-DEFAULT_VLM_CAPTION_INSTRUCTION = "Shortly describe the content of this video in two sentences."
-
+DEFAULT_VLM_CAPTION_INSTRUCTION = (
+    "Shortly describe the content of this video in one or two sentences."
+)
 
 class CaptionerType(str, Enum):
     """Enum for different types of video captioners."""
@@ -30,83 +28,39 @@ class CaptionerType(str, Enum):
     QWEN_25_VL = "qwen_25_vl"
 
 
+# Add this constant, matching model_loader.py
+LOCAL_MODELS_CACHE = Path("models")
+LOCAL_MODELS_CACHE.mkdir(parents=True, exist_ok=True)
+
+
 def create_captioner(
     captioner_type: CaptionerType,
-    models_dir: Union[str, Path] = "models",  # Added models_dir
-    **kwargs,
+    device: str = None,
+    use_8bit: bool = True,  # Default True, matches TransformersVlmCaptioner
+    vlm_instruction: str = DEFAULT_VLM_CAPTION_INSTRUCTION,
+    llava_model_id_or_path: str = "llava-hf/LLaVA-NeXT-Video-7B-hf",
+    qwen_model_id_or_path: str = "Qwen/Qwen2.5-VL-7B-Instruct",  # Default to HF ID
 ) -> "MediaCaptioningModel":
-    """Factory function to create a video captioner.
-
-    Args:
-        captioner_type: The type of captioner to create
-        models_dir: The directory to store/load models from.
-        **kwargs: Additional arguments to pass to the captioner constructor
-
-    Returns:
-        An instance of a MediaCaptioningModel
-    """
-    if captioner_type == CaptionerType.LLAVA_NEXT_7B:
-        return TransformersVlmCaptioner(
-            model_id="llava-hf/LLaVA-NeXT-Video-7B-hf",
-            models_dir=models_dir,  # Pass models_dir
-            **kwargs,
-        )
-    elif captioner_type == CaptionerType.QWEN_25_VL:
-        return TransformersVlmCaptioner(
-            model_id="Qwen/Qwen2.5-VL-7B-Instruct",
-            models_dir=models_dir,
-            **kwargs,
-        )
-    else:
-        raise ValueError(f"Unsupported captioner type: {captioner_type}")
+    """Factory function to create a media captioning model."""
+    return TransformersVlmCaptioner(
+        model_type=captioner_type,
+        device=device,
+        use_8bit=use_8bit,
+        vlm_instruction=vlm_instruction,
+        llava_model_id_or_path=llava_model_id_or_path,
+        qwen_model_id_or_path=qwen_model_id_or_path,
+    )
 
 
-class MediaCaptioningModel(ABC):
-    """Abstract base class for video and image captioning models."""
-
-    @abstractmethod
-    def caption(self, path: Union[str, Path]) -> str:
-        """Generate a caption for the given video or image.
-
-        Args:
-            path: Path to the video/image file to caption
-
-        Returns:
-            A string containing the generated caption
-        """
-
-    @staticmethod
-    def _read_video_frames(video_path: Union[str, Path], sampling_factor: int = 8) -> torch.Tensor:
-        """Read frames from a video file."""
-        video_reader = decord.VideoReader(uri=str(video_path))
-        total_frames = len(video_reader)
-        indices = list(range(0, total_frames, total_frames // sampling_factor))
-        frames = video_reader.get_batch(indices)
-        return frames
-
-    @staticmethod
-    def _read_image(image_path: Union[str, Path]) -> torch.Tensor:
-        """Read an image file and convert to tensor format."""
-        image = open_image_as_srgb(image_path)
-        image_tensor = torch.from_numpy(np.array(image))
-        return image_tensor
-
-    @staticmethod
-    def _is_image_file(path: Union[str, Path]) -> bool:
-        """Check if the file is an image based on extension."""
-        return str(path).lower().endswith((".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp"))
-
-    @staticmethod
-    def _clean_raw_caption(caption: str) -> str:
-        """Clean up the raw caption."""
-        start = ["The", "This"]
-        kind = ["video", "image", "scene", "animated sequence"]
-        act = ["displays", "shows", "features", "depicts", "presents", "showcases", "captures"]
-
-        for x, y, z in itertools.product(start, kind, act):
-            caption = caption.replace(f"{x} {y} {z} ", "", 1)
-
-        return caption
+class MediaCaptioningModel(Protocol):
+    def caption(
+        self,
+        path: Union[str, Path],
+        fps: int = 3,
+        clean_caption: bool = True,
+        max_new_tokens: int = 100,
+    ) -> str:
+        ...
 
 
 class TransformersVlmCaptioner(MediaCaptioningModel):
@@ -114,211 +68,262 @@ class TransformersVlmCaptioner(MediaCaptioningModel):
 
     def __init__(
         self,
-        model_id: str = "llava-hf/LLaVA-NeXT-Video-7B-hf",
-        models_dir: Union[str, Path] = "models",  # Added models_dir with default
-        device: str | torch.device = None,
-        use_8bit: bool = False,
+        model_type: CaptionerType,
+        device: str = None,
+        use_8bit: bool = True,  # Default to True as requested
         vlm_instruction: str = DEFAULT_VLM_CAPTION_INSTRUCTION,
+        llava_model_id_or_path: str = "llava-hf/LLaVA-NeXT-Video-7B-hf",
+        qwen_model_id_or_path: str = "Qwen/Qwen2.5-VL-7B-Instruct",  # Default to HF ID
     ):
-        """Initialize the captioner.
-
-        Args:
-            model_id: HuggingFace model ID
-            models_dir: Directory to store/load HuggingFace models.
-            device: torch.device to use for the model
-            use_8bit: Whether to load the model in 8-bit.
-            vlm_instruction: The instruction prompt for the VLM.
-        """
-        self.device = torch.device(device or "cuda" if torch.cuda.is_available() else "cpu")
-        print(f"[DEBUG] torch.cuda.is_available(): {torch.cuda.is_available()}")
+        self.model_type = model_type
+        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.vlm_instruction = vlm_instruction
-        self.models_dir = Path(models_dir)  # Store as Path object
-        self._load_model(model_id, use_8bit=use_8bit, models_dir=self.models_dir) # Pass models_dir
+        self.model = None
+        self.processor = None
+
+        model_torch_dtype = torch.float16 if self.device.type == "cuda" else torch.float32
+
+        if self.model_type == CaptionerType.LLAVA_NEXT_7B:
+            repo_id = llava_model_id_or_path
+            local_cache_dir = LOCAL_MODELS_CACHE / repo_id.replace("/", "--")
+
+            load_kwargs = {
+                "quantization_config": BitsAndBytesConfig(load_in_8bit=True) if use_8bit else None,
+                "torch_dtype": model_torch_dtype if not use_8bit else None,
+                "device_map": self.device.type if use_8bit else None, # Use device_map for 8-bit, otherwise handle with .to()
+                "low_cpu_mem_usage": True, # Often helpful
+            }
+            load_kwargs_local = load_kwargs.copy()
+            load_kwargs_local["local_files_only"] = True
+
+            try:
+                self.model = LlavaNextVideoForConditionalGeneration.from_pretrained(
+                    local_cache_dir,
+                    **load_kwargs_local
+                )
+                self.processor = AutoProcessor.from_pretrained(local_cache_dir, use_fast=True, local_files_only=True)
+                print(f"Loaded LLaVA model from local cache: {local_cache_dir}")
+
+            except (OSError, HFValidationError) as e:
+                 print(f"LLaVA model not found in local cache ({local_cache_dir}).")
+                 print(f"Attempting to download {repo_id} from Hugging Face...")
+                 snapshot_download(
+                     repo_id=repo_id,
+                     local_dir=local_cache_dir,
+                     # force_download=True # Uncomment to force fresh download
+                 )
+                 print(f"Download of {repo_id} complete.")
+                 print(f"Downloaded LLaVA model to local cache: {local_cache_dir}")
+                 self.model = LlavaNextVideoForConditionalGeneration.from_pretrained(
+                     local_cache_dir,
+                     **load_kwargs # Use base load_kwargs here
+                 )
+                 self.processor = AutoProcessor.from_pretrained(local_cache_dir, use_fast=True, local_files_only=True)
+
+            if not use_8bit and self.model is not None and load_kwargs.get("device_map") is None:
+                 self.model.to(self.device)
+
+            if self.processor is not None:
+                print(f"Updating LLaVA processor config format in {local_cache_dir}...")
+                self.processor.save_pretrained(local_cache_dir)
+                print("Processor config updated.")
+
+        elif self.model_type == CaptionerType.QWEN_25_VL:
+            repo_id = qwen_model_id_or_path
+            local_cache_dir = LOCAL_MODELS_CACHE / repo_id.replace("/", "--")
+
+            load_kwargs = {
+                "quantization_config": BitsAndBytesConfig(load_in_8bit=True) if use_8bit else None,
+                "torch_dtype": model_torch_dtype if not use_8bit else None,
+                "device_map": self.device.type if use_8bit else None, # Use device_map for 8-bit
+                "trust_remote_code": True, # Qwen specific
+                "low_cpu_mem_usage": True, # Often helpful
+            }
+            load_kwargs_local = load_kwargs.copy()
+            load_kwargs_local["local_files_only"] = True
+
+            try:
+                 self.processor = AutoProcessor.from_pretrained(local_cache_dir, use_fast=True, local_files_only=True, trust_remote_code=True)
+                 self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                    local_cache_dir,
+                    **load_kwargs_local # Use local kwargs for initial load
+                 )
+                 print(f"Loaded Qwen model from local cache: {local_cache_dir}")
+
+            except (OSError, HFValidationError) as e:
+                 print(f"Qwen model not found in local cache ({local_cache_dir}).")
+                 print(f"Attempting to download {repo_id} from Hugging Face...")
+                 snapshot_download(
+                     repo_id=repo_id,
+                     local_dir=local_cache_dir,
+                     trust_remote_code=True, # Need this for download too? Probably not, but included for safety.
+                     # force_download=True # Uncomment to force fresh download
+                 )
+                 print(f"Download of {repo_id} complete.")
+                 self.processor = AutoProcessor.from_pretrained(local_cache_dir, use_fast=True, local_files_only=True, trust_remote_code=True)
+                 self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                     local_cache_dir,
+                     **load_kwargs # Use base load_kwargs
+                 )
+
+            if not use_8bit and self.model is not None and load_kwargs.get("device_map") is None:
+                 self.model.to(self.device)
+
+            if self.processor is not None:
+                print(f"Updating Qwen processor config format in {local_cache_dir}...")
+                self.processor.save_pretrained(local_cache_dir)
+                print("Processor config updated.")
+
+        else:
+             raise ValueError(f"Unsupported model_type: {self.model_type}")
+
+        if self.model is None or self.processor is None:
+             raise RuntimeError(f"Failed to load model components for {self.model_type}")
+
+    def _is_image_file(self, path: Union[str, Path]) -> bool:
+        """Check if the path points to a common image file."""
+        return str(path).lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".gif"))
+
+    def _clean_raw_caption(self, raw_caption: str) -> str:
+        """Clean up the raw caption from the VLM by removing common patterns."""
+        if self.vlm_instruction and raw_caption.startswith(self.vlm_instruction):
+            caption = raw_caption[len(self.vlm_instruction) :].strip()
+        else:
+            caption = raw_caption.strip()
+
+        assistant_prefix = "ASSISTANT:"
+        if caption.startswith(assistant_prefix):
+            caption = caption[len(assistant_prefix):].strip()
+        
+        parts = caption.split("ASSISTANT:")
+        if len(parts) > 1:
+            caption = parts[-1].strip()
+
+        if caption.startswith('"') and caption.endswith('"'):
+            caption = caption[1:-1]
+        if caption.startswith("'") and caption.endswith("'"):
+            caption = caption[1:-1]
+
+        return caption.strip()
 
     def caption(
         self,
         path: Union[str, Path],
-        frames_sampling_factor: int = 8,
+        fps: int = 3,
         clean_caption: bool = True,
+        max_new_tokens: int = 100,
     ) -> str:
-        """Generate a caption for the given video or image.
-
-        Args:
-            path: Path to the video/image file to caption
-            frames_sampling_factor: Factor to sample frames from the video, i.e. every
-                `frames_sampling_factor`-th frame will be used (ignored for images).
-            clean_caption: Whether to clean up the raw caption by removing common VLM patterns.
-
-        Returns:
-            A string containing the generated caption
-        """
-        # Determine if input is image or video
         is_image = self._is_image_file(path)
+        media_data = None
 
-        # Read input file
-        media = self._read_image(path) if is_image else self._read_video_frames(path, frames_sampling_factor)
-        # DEBUG: Print shape and dtype of loaded media
-        import os
-        debug_log_path = os.path.join(os.path.dirname(__file__), "media_shape_debug.log")
-        if hasattr(media, 'shape'):
-            debug_msg = f"[DEBUG] Loaded media shape: {media.shape}, dtype: {media.dtype}, is_image: {is_image}"
-            print(debug_msg)
-            try:
-                with open(debug_log_path, "a", encoding="utf-8") as dbg_file:
-                    dbg_file.write(debug_msg + "\n")
-            except Exception as e:
-                print(f"[DEBUG] Failed to write debug log: {e}")
-        else:
-            debug_msg = f"[DEBUG] Loaded media type: {type(media)}, is_image: {is_image}"
-            print(debug_msg)
-            try:
-                with open(debug_log_path, "a", encoding="utf-8") as dbg_file:
-                    dbg_file.write(debug_msg + "\n")
-            except Exception as e:
-                print(f"[DEBUG] Failed to write debug log: {e}")
+        if is_image:
+            media_data = iio.imread(str(path))
+            if media_data.ndim == 3 and media_data.shape[2] == 4: # RGBA to RGB
+                media_data = media_data[:, :, :3]
+        else:  # It's a video
+            video_reader = decord.VideoReader(str(path))
+            num_frames_total = len(video_reader)
 
-        # Permute video tensor for Qwen models only ([N, H, W, C] -> [N, C, H, W])
-        is_qwen = hasattr(self, "model") and (
-    "Qwen" in type(self.model).__name__ or
-    "Qwen" in getattr(getattr(self.model, "config", None), "_name_or_path", "")
-)
-        if (not is_image and is_qwen and hasattr(media, 'shape') and len(media.shape) == 4 and media.shape[-1] == 3):
-            media = media.permute(0, 3, 1, 2).contiguous()
-            debug_msg = f"[DEBUG] Permuted media for Qwen: new shape {media.shape}, dtype: {media.dtype}"
-            print(debug_msg)
-            try:
-                with open(debug_log_path, "a", encoding="utf-8") as dbg_file:
-                    dbg_file.write(debug_msg + "\n")
-            except Exception as e:
-                print(f"[DEBUG] Failed to write debug log: {e}")
-        # Prepare inputs
+            if num_frames_total == 0:
+                raise ValueError(f"Video file {path} has 0 frames. Cannot process.")
+
+            if self.model_type == CaptionerType.LLAVA_NEXT_7B:
+                num_frames_to_sample = 8  # LLaVA-NeXT is trained on 8 frames
+                if num_frames_total <= num_frames_to_sample:
+                    indices = np.arange(num_frames_total)
+                else:
+                    indices = np.linspace(0, num_frames_total - 1, num_frames_to_sample, dtype=int)
+                media_data = video_reader.get_batch(indices).numpy()
+            elif self.model_type == CaptionerType.QWEN_25_VL:
+                media_data = video_reader.get_batch(np.arange(num_frames_total)).numpy()
+            else:  # Fallback for other/undefined model types
+                media_data = video_reader.get_batch(np.arange(num_frames_total)).numpy()
+
+        if media_data is None:
+            raise ValueError(f"Could not load media from path: {path}")
+
         conversation = [
             {
                 "role": "user",
                 "content": [
                     {"type": "text", "text": self.vlm_instruction},
-                    {"type": "video" if not is_image else "image"},
+                    {"type": "image" if is_image else "video"}, # Use correct type
                 ],
             },
         ]
 
-        prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True)
-        inputs = self.processor(
-            text=prompt,
-            videos=media if not is_image else None,
-            images=media if is_image else None,
-            padding=True,
-            return_tensors="pt",
-        )
-        # Robust device handling: move all tensors in the inputs to self.device for LLaVA
-        is_qwen = hasattr(self, "model") and (
-            "Qwen" in type(self.model).__name__ or
-            "Qwen" in getattr(getattr(self.model, "config", None), "_name_or_path", "")
-        )
-        if not is_qwen:
-            for k, v in inputs.items():
-                if hasattr(v, "to"):
-                    inputs[k] = v.to(self.device)
-        else:
-            # For Qwen, keep current logic (already handled above)
-            inputs = inputs.to(self.device)
+        if self.model_type == CaptionerType.QWEN_25_VL and hasattr(self.processor, 'tokenizer'):
+             prompt = self.processor.tokenizer.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
+             inputs = self.processor(
+                 text=[prompt],
+                 videos=media_data if not is_image else None,
+                 images=media_data if is_image else None,
+                 padding=True,
+                 truncation=True,
+                 return_tensors="pt",
+                 video_fps=fps if not is_image else None,
+             ).to(self.device)
+        else: # LLaVA and others
+             prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True)
+             inputs = self.processor(
+                 text=prompt,
+                 videos=media_data if not is_image else None,
+                 images=media_data if is_image else None,
+                 padding=True,
+                 truncation=True,
+                 return_tensors="pt",
+                 video_fps=fps if not is_image else None,
+             ).to(self.device)
 
-        # Generate caption
-        output_tokens = self.model.generate(
-            **inputs,
-            max_new_tokens=200,
-            do_sample=False,
-            temperature=None,
-        )
+        raw_caption = ""
+        generated_ids = None
 
-        # Trim the generated tokens to exclude the input tokens
-        output_tokens_trimmed = [
-            out_ids[len(in_ids) :]
-            for in_ids, out_ids in zip(
-                inputs.input_ids,
-                output_tokens,
-                strict=False,
+        inputs = {k: v.to(self.model.device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+
+        if self.model_type == CaptionerType.LLAVA_NEXT_7B:
+            generated_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                num_beams=4,
+                no_repeat_ngram_size=2,
+                early_stopping=True,
             )
-        ]
-
-        # Decode the generated tokens to text
-        caption_raw = self.processor.batch_decode(
-            output_tokens_trimmed,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False,
-        )[0]
-
-        # Clean up caption
-        caption = self._clean_raw_caption(caption_raw) if clean_caption else caption_raw
-        return caption
-
-    def _load_model(self, model_id: str, use_8bit: bool, models_dir: Path) -> None:
-        model_name = model_id.split("/")[-1]
-        local_model_path = models_dir / model_name
-
-        if model_id == "llava-hf/LLaVA-NeXT-Video-7B-hf":
-            model_cls = LlavaNextVideoForConditionalGeneration
-        elif "Qwen" in model_id:
-            from transformers import Qwen2_5_VLForConditionalGeneration
-            model_cls = Qwen2_5_VLForConditionalGeneration
-        else:
-            model_cls = AutoModel
-
-        quantization_config = BitsAndBytesConfig(load_in_8bit=True) if use_8bit else None
-
-        # Attempt to load from local path first
-        if local_model_path.exists() and local_model_path.is_dir():
-            try:
-                print(f"Attempting to load model from local path: {local_model_path}")  # noqa: T201
-                self.model = model_cls.from_pretrained(
-                    local_model_path,
-                    torch_dtype=torch.bfloat16,
-                    low_cpu_mem_usage=True,
-                    quantization_config=quantization_config,
-                    device_map=self.device.type,
-                )
-                if not use_8bit:
-                    self.model.to(self.device)  # Only move if not 8-bit
-                # Set use_fast=True for processor as recommended by transformers >=4.52
-                self.processor = AutoProcessor.from_pretrained(local_model_path, use_fast=True)
-                print(f"Successfully loaded model and processor from {local_model_path}")  # noqa: T201
-                return  # Successfully loaded
-            except Exception as e:
-                print(f"Failed to load model from {local_model_path}: {e}. Will attempt to download from Hugging Face Hub.")  # noqa: T201
-
-        # If not found locally or local loading failed, download from Hub
-        print(f"Model not found at {local_model_path} or local loading failed. Downloading '{model_id}' from Hugging Face Hub.")  # noqa: T201
-        try:
-            # Ensure the target directory for saving models exists
-            models_dir.mkdir(parents=True, exist_ok=True)
-
-            self.model = model_cls.from_pretrained(
-                model_id,
-                torch_dtype=torch.bfloat16,
-                low_cpu_mem_usage=True,
-                quantization_config=quantization_config,
-                device_map=self.device.type,
+        elif self.model_type == CaptionerType.QWEN_25_VL:
+            generated_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens
             )
-            if not use_8bit:
-                self.model.to(self.device)  # Only move if not 8-bit
-            # Set use_fast=True for processor as recommended by transformers >=4.52
-            self.processor = AutoProcessor.from_pretrained(model_id, use_fast=True)
-            print(f"Successfully downloaded '{model_id}'.")  # noqa: T201
+        else:
+            raise ValueError(f"Unsupported model_type for caption generation: {self.model_type}")
 
-            # Save the downloaded model and processor to the local path for future use
-            try:
-                print(f"Saving model and processor to {local_model_path}...")  # noqa: T201
-                self.model.save_pretrained(local_model_path)
-                self.processor.save_pretrained(local_model_path)
-                print(f"Successfully saved model and processor to {local_model_path}.")  # noqa: T201
-            except Exception as e:
-                # Log if saving fails, but the model is already loaded in memory, so a warning is sufficient.
-                print(f"Warning: Failed to save model/processor to {local_model_path}: {e}")  # noqa: T201
+        if generated_ids is not None and inputs is not None and 'input_ids' in inputs and inputs['input_ids'] is not None:
+             input_token_len = inputs['input_ids'].shape[1]
+             generated_ids_trimmed = generated_ids[:, input_token_len:]
+        else:
+             print("Warning: Could not determine input token length for trimming.")
+             generated_ids_trimmed = generated_ids
 
-        except Exception as e:
-            print(f"Fatal error: Could not download or load model '{model_id}' from Hugging Face Hub: {e}")  # noqa: T201
-            # Depending on desired behavior, could set model/processor to None or raise
-            raise # Re-raise the exception if download or initial load from hub fails
+        if generated_ids_trimmed is not None:
+            if self.model_type == CaptionerType.QWEN_25_VL:
+                raw_caption = self.processor.tokenizer.batch_decode(
+                    generated_ids_trimmed,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False
+                )[0]
+            else: # LLaVA and potentially others
+                raw_caption = self.processor.batch_decode(
+                    generated_ids_trimmed,
+                    skip_special_tokens=True
+                )[0]
+        else:
+             raw_caption = ""
+
+        if clean_caption:
+            final_caption = self._clean_raw_caption(raw_caption)
+        else:
+            final_caption = raw_caption.strip()
+
+        return final_caption
 
 
 def example() -> None:

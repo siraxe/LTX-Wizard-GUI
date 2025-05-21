@@ -279,7 +279,8 @@ def switch_video_in_dialog(page: ft.Page, new_video_offset: int):
     # Save the current caption before switching
     if _active_caption_field_instance is not None and _current_video_path_for_dialog:
         current_caption = _active_caption_field_instance.value.strip()
-        save_caption_for_video(page, _current_video_path_for_dialog, current_caption, _active_on_caption_updated_callback)
+        # Pass None for the callback when saving on video switch to prevent thumbnail refresh
+        save_caption_for_video(page, _current_video_path_for_dialog, current_caption, None)
 
     idx = _current_video_list_for_dialog.index(_current_video_path_for_dialog)
     new_idx = (idx + new_video_offset) % len(_current_video_list_for_dialog)
