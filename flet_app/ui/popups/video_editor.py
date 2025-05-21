@@ -191,7 +191,7 @@ def handle_set_closest_div32(width_field, height_field, current_video_path, page
 
 def handle_crop_all_videos(page: ft.Page, width_field, height_field, video_list):
     """
-    Crops all videos in video_list using the current width/height field values.
+    Crops all videos in video_list using the current width/height field values, with scaling up if needed (see handle_crop_video_click).
     """
     if not video_list:
         return
@@ -201,9 +201,8 @@ def handle_crop_all_videos(page: ft.Page, width_field, height_field, video_list)
 def handle_crop_video_click(page: ft.Page, width_field, height_field, current_video_path):
     """
     Handles cropping logic: reads dimensions, runs FFmpeg to crop/scale and encode video, and overwrites the original file.
+    Now also scales up proportionally if video is smaller than the target dimensions, so smallest side matches target, before cropping.
     """
-
-
     if not width_field or not height_field or not current_video_path:
         return
     try:
@@ -214,6 +213,23 @@ def handle_crop_video_click(page: ft.Page, width_field, height_field, current_vi
     except ValueError:
         return
 
+    # Get original video dimensions
+    cap = cv2.VideoCapture(current_video_path)
+    if not cap.isOpened():
+        return
+    orig_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    orig_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+    if orig_width <= 0 or orig_height <= 0:
+        return
+
+    # Always scale so that the smallest side matches the corresponding target (up or down)
+    scale_w = target_width / orig_width
+    scale_h = target_height / orig_height
+    scale_factor = max(scale_w, scale_h)
+    scaled_width = int(round(orig_width * scale_factor))
+    scaled_height = int(round(orig_height * scale_factor))
+
     temp_output_dir = os.path.join(os.path.dirname(__file__), "..", "..", "storage", "temp")
     os.makedirs(temp_output_dir, exist_ok=True)
     ffmpeg_exe = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ffmpeg", "bin", "ffmpeg.exe"))
@@ -222,12 +238,14 @@ def handle_crop_video_click(page: ft.Page, width_field, height_field, current_vi
     ffmpeg_output_path = os.path.join(temp_output_dir, f"ffmpeg_cropped_{os.path.basename(current_video_path)}")
     input_abs_path = os.path.abspath(current_video_path)
     output_abs_path = os.path.abspath(ffmpeg_output_path)
-    # First scale to fit within target dimensions (preserve aspect), then crop center to target size
-    # This ensures the result always fills the box without stretching
-    scale_crop_filter = (
-        f"scale='if(gt(a,{target_width}/{target_height}),{target_width},-1)':'if(gt(a,{target_width}/{target_height}),-1,{target_height})',"
-        f"crop={target_width}:{target_height}"
-    )
+
+    # Compose FFmpeg filter chain
+    filters = []
+    filters.append(f"scale={scaled_width}:{scaled_height}")
+    # Always crop to target size, center
+    filters.append(f"crop={target_width}:{target_height}")
+    scale_crop_filter = ','.join(filters)
+
     cmd_list = [
         ffmpeg_exe, "-y", "-i", input_abs_path,
         "-vf", scale_crop_filter,
@@ -235,8 +253,6 @@ def handle_crop_video_click(page: ft.Page, width_field, height_field, current_vi
         output_abs_path
     ]
     def log_debug(msg):
-        with open("crop_debug.log", "a", encoding="utf-8") as f:
-            f.write(msg + "\n")
         print(msg)
 
     log_debug(f"Running FFmpeg: {' '.join(cmd_list)}")
