@@ -86,6 +86,7 @@ class LtxvTrainer:
         self._console = Console()
         self._print_config(trainer_config)
         self._setup_accelerator()
+        self._num_processes = self._accelerator.num_processes
         self._load_models()
         self._compile_transformer()
         self._setup_block_swap() # Call after model loading and compilation
@@ -804,7 +805,7 @@ class LtxvTrainer:
         # Move unused components back to CPU.
         self._vae.to("cpu")
         if not self._config.acceleration.load_text_encoder_in_8bit:
-            self._text_encoder.to("cpu")
+             self._text_encoder.to("cpu") # This line is added/modified
 
         rel_outputs_path = output_dir.relative_to(self._config.output_dir)
         logger.info(f"🎥 Validation samples for step {self._global_step} saved in {rel_outputs_path}")

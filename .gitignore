@@ -43,3 +43,4 @@ models/*
 !flet_app/assets/git_images/
 
 
+flet_app/assets/config_to_train.yaml

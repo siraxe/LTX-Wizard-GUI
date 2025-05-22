@@ -56,13 +56,19 @@ def save_training_config_to_yaml(training_tab_container):
         )
     return out_path, yaml_dict
 
-def run_training_batch_file():
+def run_training_batch_file(use_multi_gpu: bool):
     """
-    Runs the training batch file to start the training process.
+    Runs the appropriate training batch file based on the multi_gpu flag.
     Returns the batch file path.
     """
+    if use_multi_gpu:
+        bat_filename = "start_last_multi.bat"
+    else:
+        print("Running single-GPU training...")
+        bat_filename = "start_last.bat"
+
     bat_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "start_training.bat")
+        os.path.join(os.path.dirname(__file__), "..", "..", bat_filename)
     )
     print(f"DEBUG: Batch file path: {bat_path}")
     subprocess.run(bat_path, shell=True)
@@ -126,15 +132,23 @@ def build_main_content_row(sub_navigation_rail, content_area):
         vertical_alignment=ft.CrossAxisAlignment.START
     )
 
-def build_bottom_app_bar(on_start_click):
+def build_bottom_app_bar(on_start_click, multi_gpu_checkbox):
     """
-    Builds the bottom app bar with the Start button.
+    Builds the bottom app bar with the Start button and Multi-GPU checkbox.
     """
     return ft.BottomAppBar(
         bgcolor=ft.Colors.BLUE_GREY_900,
         height=60,
         content=ft.Row(
             [
+                # Container for Multi-GPU checkbox
+                ft.Container(
+                    content=multi_gpu_checkbox,
+                    alignment=ft.alignment.center_left,
+                    expand=True,
+                    padding=ft.padding.only(left=20) # Add some padding
+                ),
+                # Container for Start button
                 ft.Container(
                     ft.ElevatedButton(
                         "Start",
@@ -147,7 +161,7 @@ def build_bottom_app_bar(on_start_click):
                         height=40,
                     ),
                     alignment=ft.alignment.center_right,
-                    expand=True,
+                    padding=ft.padding.only(right=20), # Add some padding
                 ),
             ],
             expand=True,
@@ -210,6 +224,9 @@ def get_training_tab_content(page: ft.Page):
     sub_navigation_rail = build_navigation_rail(on_nav_change)
     main_content_row = build_main_content_row(sub_navigation_rail, content_area)
 
+    # Add Multi-GPU checkbox
+    multi_gpu_checkbox = ft.Checkbox(label="Multi-GPU", value=False) # False by default
+
     def handle_training_output(page=None):
         """
         Handles saving config and running training, with error handling and user feedback.
@@ -224,8 +241,13 @@ def get_training_tab_content(page: ft.Page):
                     page.snack_bar = ft.SnackBar(content=ft.Text(msg), open=True)
                     page.update()
                 return
+
             out_path, _ = save_training_config_to_yaml(training_tab_container)
-            bat_path = run_training_batch_file()
+
+            # Determine which batch file to run based on checkbox state
+            use_multi_gpu = multi_gpu_checkbox.value
+            bat_path = run_training_batch_file(use_multi_gpu)
+
             msg = f"Saved config to {out_path}\nBatch file: {bat_path}\nTraining started."
             if page is not None:
                 page.snack_bar = ft.SnackBar(content=ft.Text(msg), open=True)
@@ -250,7 +272,7 @@ def get_training_tab_content(page: ft.Page):
         else:
             handle_training_output(e.page)
 
-    bottom_app_bar = build_bottom_app_bar(handle_start_click)
+    bottom_app_bar = build_bottom_app_bar(handle_start_click, multi_gpu_checkbox)
     main_container = build_main_container(main_content_row, bottom_app_bar)
 
     # Attach references for later extraction

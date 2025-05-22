@@ -26,9 +26,15 @@ app = typer.Typer(
     help="Train LTXV models using configuration from YAML files.",
 )
 
-
 @app.command()
-def main(config_path: str = typer.Argument(..., help="Path to YAML configuration file")) -> None:
+def main(
+    config_path: str = typer.Argument(..., help="Path to YAML configuration file"),
+    num_processes: int = typer.Option(
+        1,
+        "--num_processes",
+        help="Number of processes (GPUs) to use. Note: This argument is for informational purposes within the script and does not override the actual launch configuration set by accelerate environment variables or accelerate launch.",
+    ),
+) -> None:
     """Train the model using the provided configuration file."""
     # Load the configuration from the YAML file
     config_path = Path(config_path)
