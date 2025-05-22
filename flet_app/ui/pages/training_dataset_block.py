@@ -5,15 +5,8 @@ import numpy as np
 import json
 from .._styles import create_textfield, create_dropdown # Import helper functions
 from ..tab_dataset_view import get_dataset_folders  # Reuse the helper
-from ..utils.utils_datasets import VIDEO_EXTENSIONS
+from settings import config
 
-# Collage display and generation size (16:9 aspect ratio)
-COLLAGE_WIDTH = 270
-COLLAGE_HEIGHT = 152
-
-# Thumbnail cell max size (for grid)
-THUMB_CELL_W = 91
-THUMB_CELL_H = 51
 
 # =====================
 # Data/Utility Functions
@@ -37,7 +30,7 @@ def load_dataset_summary(dataset):
     num_captioned = 0
     num_processed = 0
     total_frames = 0
-    video_files = [f for ext in VIDEO_EXTENSIONS for f in os.listdir(dataset_dir) if f.lower().endswith(ext)]
+    video_files = [f for ext in config.VIDEO_EXTENSIONS for f in os.listdir(dataset_dir) if f.lower().endswith(ext)]
     num_videos = len(video_files)
     if os.path.exists(info_path):
         try:
@@ -67,7 +60,7 @@ def load_dataset_summary(dataset):
         "Total frames": total_frames
     }
 
-def generate_collage(thumbnails_dir, summary_path, target_w=COLLAGE_WIDTH, target_h=COLLAGE_HEIGHT):
+def generate_collage(thumbnails_dir, summary_path, target_w=config.COLLAGE_WIDTH, target_h=config.COLLAGE_HEIGHT):
     """
     Generates a collage image from all jpg thumbnails in a directory (except summary.jpg).
     """
@@ -84,21 +77,21 @@ def generate_collage(thumbnails_dir, summary_path, target_w=COLLAGE_WIDTH, targe
     scaled_thumbs = []
     for t in thumbs:
         h, w = t.shape[:2]
-        scale = min(THUMB_CELL_W / w, THUMB_CELL_H / h, 1.0)
+        scale = min(config.THUMB_CELL_W / w, config.THUMB_CELL_H / h, 1.0)
         new_w = int(w * scale)
         new_h = int(h * scale)
         resized = cv2.resize(t, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        pad_top = (THUMB_CELL_H - new_h) // 2
-        pad_bottom = THUMB_CELL_H - new_h - pad_top
-        pad_left = (THUMB_CELL_W - new_w) // 2
-        pad_right = THUMB_CELL_W - new_w - pad_left
+        pad_top = (config.THUMB_CELL_H - new_h) // 2
+        pad_bottom = config.THUMB_CELL_H - new_h - pad_top
+        pad_left = (config.THUMB_CELL_W - new_w) // 2
+        pad_right = config.THUMB_CELL_W - new_w - pad_left
         padded = cv2.copyMakeBorder(resized, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_CONSTANT, value=0)
         scaled_thumbs.append(padded)
     grid_rows = []
     for r in range(rows):
         row_imgs = scaled_thumbs[r*best_cols:(r+1)*best_cols]
         while len(row_imgs) < best_cols:
-            row_imgs.append(np.zeros((THUMB_CELL_H, THUMB_CELL_W, 3), dtype=np.uint8))
+            row_imgs.append(np.zeros((config.THUMB_CELL_H, config.THUMB_CELL_W, 3), dtype=np.uint8))
         grid_rows.append(np.hstack(row_imgs))
     collage = np.vstack(grid_rows)
     ch, cw = collage.shape[:2]
@@ -205,7 +198,7 @@ def build_training_dataset_page_content():
         Builds the row that displays the dataset summary and collage image.
         """
         return ft.Row([
-            ft.Container(key="summary_img_container", width=COLLAGE_WIDTH, height=COLLAGE_HEIGHT),
+            ft.Container(key="summary_img_container", width=config.COLLAGE_WIDTH, height=config.COLLAGE_HEIGHT),
             ft.Column(key="summary_text_column", spacing=8, expand=True)
         ], spacing=10)
 
@@ -255,8 +248,8 @@ def build_training_dataset_page_content():
                 if os.path.exists(summary_path):
                     summary_img_container.content = ft.Image(
                         src=summary_path,
-                        width=COLLAGE_WIDTH - 2,
-                        height=COLLAGE_HEIGHT,
+                        width=config.COLLAGE_WIDTH - 2,
+                        height=config.COLLAGE_HEIGHT,
                         fit=ft.ImageFit.CONTAIN
                     )
                 summary_data = load_dataset_summary(current_selected_dataset)

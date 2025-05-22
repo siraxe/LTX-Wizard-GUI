@@ -29,11 +29,26 @@ Advanced usage:
     caption_videos.py videos_dir/ --extensions mp4,mov,avi --output captions.json
 """
 
+import sys
+import os
+from pathlib import Path
+
+# Add project root to sys.path to resolve imports like 'flet_app'
+# Assumes the script is run from within the project directory structure
+script_dir = Path(__file__).resolve().parent
+project_root = script_dir.parent # Start one level up from 'scripts'
+# Walk up to find a known project root file (e.g., pyproject.toml)
+while not (project_root / "pyproject.toml").exists() and project_root != project_root.parent:
+    project_root = project_root.parent
+
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+
 import csv
 import json
-import os
 from enum import Enum
-from pathlib import Path
+from flet_app.settings import config
 
 # --- Write PID to file for external process tracking ---
 try:
@@ -64,9 +79,6 @@ from ltxv_trainer.captioning import (
     create_captioner,
 )
 
-VIDEO_EXTENSIONS = ["mp4", "avi", "mov", "mkv", "webm"]
-IMAGE_EXTENSIONS = ["jpg", "jpeg", "png"]
-MEDIA_EXTENSIONS = VIDEO_EXTENSIONS + IMAGE_EXTENSIONS
 
 console = Console()
 app = typer.Typer(
@@ -210,7 +222,7 @@ def caption_media(
 
 def _get_media_files(
     input_path: Path,
-    extensions: list[str] = MEDIA_EXTENSIONS,
+    extensions: list[str] = config.MEDIA_EXTENSIONS,
     recursive: bool = False,
 ) -> list[Path]:
     """Get all media files from the input path."""
@@ -424,7 +436,7 @@ def main(  # noqa: PLR0913
         help="Instruction to give to the captioning model",
     ),
     extensions: str = typer.Option(
-        ",".join(MEDIA_EXTENSIONS),
+        ",".join(config.MEDIA_EXTENSIONS),
         "--extensions",
         "-e",
         help="Comma-separated list of media file extensions to process",
