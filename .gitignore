@@ -5,6 +5,7 @@
 .python-version
 .venv
 .vscode
+.cursor
 TODO.txt
 tmp
 
