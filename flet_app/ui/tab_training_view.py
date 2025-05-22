@@ -1,6 +1,6 @@
 import flet as ft
 from .pages.training_config import get_training_config_page_content
-from .pages.training_sampling import get_training_sampling_page_content
+from .pages.training_sampling import build_training_sampling_page_content
 from ui.popups import dataset_not_selected
 import os
 import yaml
@@ -203,7 +203,7 @@ def get_training_tab_content(page: ft.Page):
 
     # Initialize config and sampling page content
     config_page_content = get_training_config_page_content()
-    sampling_page_content = get_training_sampling_page_content()
+    sampling_page_content = build_training_sampling_page_content()
 
     # Content area container
     content_area = ft.Container(

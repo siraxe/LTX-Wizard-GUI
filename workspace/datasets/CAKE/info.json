@@ -32,5 +32,10 @@
         ],
         "type": "LTXV_13B_097_DEV",
         "trigger_word": ""
+    },
+    "pika2.mp4": {
+        "width": 512,
+        "height": 512,
+        "frames": 71
     }
 }
