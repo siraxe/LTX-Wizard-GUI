@@ -5,9 +5,6 @@ import shutil
 import subprocess
 import cv2
 
-# Import global state from video_player_dialog
-# from .video_player_dialog import _current_video_list_for_dialog, _active_on_caption_updated_callback
-
 def handle_size_add(width_field, height_field, current_video_path, page=None):
     """
     Increase both width and height fields by the closest 32 multiple, maintaining aspect ratio if possible.

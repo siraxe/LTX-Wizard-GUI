@@ -14,8 +14,6 @@ from ui.utils.utils_datasets import (
     get_videos_and_thumbnails,
 )
 
-
-
 # ======================================================================================
 # Global State (Keep track of UI controls and running processes)
 # ======================================================================================
@@ -535,17 +533,6 @@ def on_update_button_click(e: ft.ControlEvent, dataset_dropdown_control, thumbna
     """Handle the update dataset list button click."""
     reload_current_dataset(e.page, dataset_dropdown_control, thumbnails_grid_control, add_button, delete_button)
 
-
-# Need access to caption_model_dropdown, captions_checkbox, cap_command, max_tokens_textfield
-# These are currently local to dataset_tab_layout. Let's define them globally for now
-# or pass them explicitly if we keep them local to the layout function.
-# Given the complexity, let's get them by reference or make them accessible.
-
-# Let's create references or access them via their parent container if needed
-# Assuming they will be created within the layout function and need to be accessible here.
-# A simpler approach for now is to access them via the page if they are defined with refs or IDs.
-# Or, pass them as arguments to the handler if it's defined where they are created.
-# Let's redefine on_add_captions_click_with_model to accept needed controls.
 
 def on_add_captions_click_with_model(e: ft.ControlEvent,
                                      caption_model_dropdown: ft.Dropdown,
@@ -1427,6 +1414,3 @@ def dataset_tab_layout(page=None):
     )
 
     return main_container # Return the main layout container
-
-
-# Note: Global on_change handlers for bucket/model/trigger word are assigned in _create_global_controls
