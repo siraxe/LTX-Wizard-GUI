@@ -1045,6 +1045,9 @@ def reload_current_dataset(
 # GUI Control Creation Functions (Build individual controls or groups)
 # ======================================================================================
 
+EXPANSION_TILE_HEADER_BG_COLOR = ft.CupertinoColors.with_opacity(0.08, ft.CupertinoColors.ACTIVE_BLUE) # Define a variable for header background color
+EXPANSION_TILE_INSIDE_BG_COLOR = ft.Colors.TRANSPARENT
+
 def _create_global_controls():
     """Creates and initializes the global UI controls."""
     global bucket_size_textfield, rename_textfield, model_name_dropdown, trigger_word_textfield
@@ -1098,7 +1101,7 @@ def _build_captioning_section(
     dataset_delete_captions_button_control: ft.ElevatedButton,
     thumbnails_grid_control: ft.GridView # Needed for event handlers
 ):
-    """Builds the captioning controls section."""
+    """Builds the captioning controls section as an ExpansionTile."""
     # Assign on_click handlers here, as they need access to local controls
     dataset_add_captions_button_control.on_click = lambda e: on_add_captions_click_with_model(
         e,
@@ -1112,18 +1115,23 @@ def _build_captioning_section(
     )
     dataset_delete_captions_button_control.on_click = lambda e: on_delete_captions_click(e, thumbnails_grid_control)
 
-
-    return ft.Column([
-        ft.Text("1. Captions", size=12),
-        ft.Divider(height=1, thickness=1),
-        ft.ResponsiveRow([captions_checkbox_container, caption_model_dropdown]),
-        ft.ResponsiveRow([max_tokens_textfield, cap_command_textfield]), # Corrected order as per user request
-        ft.Row([
-            ft.Container(content=dataset_add_captions_button_control, expand=True),
-            ft.Container(content=dataset_delete_captions_button_control, expand=True)
-        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-        ft.Container(height=10), # Spacer
-    ])
+    return ft.ExpansionTile(
+        title=ft.Text("1. Captions", size=12),
+        bgcolor=EXPANSION_TILE_INSIDE_BG_COLOR, # Apply color
+        collapsed_bgcolor=EXPANSION_TILE_HEADER_BG_COLOR, # Apply color
+        controls=[ # Wrap controls in a Column for spacing
+            ft.Column([
+                ft.ResponsiveRow([captions_checkbox_container, caption_model_dropdown]),
+                ft.ResponsiveRow([max_tokens_textfield, cap_command_textfield]),
+                ft.Row([
+                    ft.Container(content=dataset_add_captions_button_control, expand=True),
+                    ft.Container(content=dataset_delete_captions_button_control, expand=True)
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                 ft.Container(height=10), # Spacer
+            ], spacing=10)
+        ],
+        initially_expanded=True, # Set to True
+    )
 
 
 def _build_preprocessing_section(
@@ -1133,7 +1141,7 @@ def _build_preprocessing_section(
     dataset_preprocess_button_control: ft.ElevatedButton,
     thumbnails_grid_control: ft.GridView # Needed for event handler callback
 ):
-    """Builds the preprocessing controls section."""
+    """Builds the preprocessing controls section as an ExpansionTile."""
     # Assign event handler for preprocess button here, as it needs access to local controls
     dataset_preprocess_button_control.on_click = lambda e: on_preprocess_dataset_click(
         e,
@@ -1141,29 +1149,41 @@ def _build_preprocessing_section(
         bucket_size_textfield,
         trigger_word_textfield
     )
-    return ft.Column([
-        ft.Text("2. Preprocess Dataset", size=12),
-        ft.Divider(height=1, thickness=1),
-        model_name_dropdown,
-        bucket_size_textfield,
-        trigger_word_textfield,
-        dataset_preprocess_button_control,
-        ft.Container(height=10), # Spacer
-    ])
+    return ft.ExpansionTile(
+        title=ft.Text("2. Preprocess Dataset", size=12),
+        bgcolor=EXPANSION_TILE_INSIDE_BG_COLOR, # Apply color
+        collapsed_bgcolor=EXPANSION_TILE_HEADER_BG_COLOR, # Apply color
+        controls=[ # Wrap controls in a Column for spacing
+            ft.Column([
+                model_name_dropdown,
+                bucket_size_textfield,
+                trigger_word_textfield,
+                dataset_preprocess_button_control,
+                ft.Container(height=10), # Spacer
+            ], spacing=10)
+        ],
+        initially_expanded=False, # Set to False
+    )
 
 
 def _build_latent_test_section():
-    """Builds the optional latent test section (currently a placeholder)."""
-    return ft.Column([
-        ft.Text("3. Test latent (optional)", size=12),
-        ft.Divider(height=1, thickness=1),
-        ft.Text("Test here", size=12),
-        ft.Container(height=10), # Spacer
-    ])
+    """Builds the optional latent test section (currently a placeholder) as an ExpansionTile."""
+    return ft.ExpansionTile(
+        title=ft.Text("3. Test latent", size=12),
+        bgcolor=EXPANSION_TILE_INSIDE_BG_COLOR, # Apply color
+        collapsed_bgcolor=EXPANSION_TILE_HEADER_BG_COLOR, # Apply color
+        controls=[ # Wrap controls in a Column for spacing
+            ft.Column([
+                ft.Text("Test here", size=12),
+                 ft.Container(height=10), # Spacer
+            ], spacing=10)
+        ],
+        initially_expanded=False, # Set to False
+    )
 
 
 def _build_rename_section(rename_textfield: ft.TextField, thumbnails_grid_control: ft.GridView):
-    """Builds the file renaming section."""
+    """Builds the file renaming section as an ExpansionTile."""
     # Assign event handler for rename button
     rename_button = create_styled_button(
         "Rename files",
@@ -1173,12 +1193,18 @@ def _build_rename_section(rename_textfield: ft.TextField, thumbnails_grid_contro
         expand=True,
         button_style=BTN_STYLE2
     )
-    return ft.Column([
-        ft.Text("Rename files", size=12),
-        ft.Divider(height=1, thickness=1),
-        rename_textfield,
-        rename_button
-    ])
+    return ft.ExpansionTile(
+        title=ft.Text("Rename files", size=12),
+        bgcolor=EXPANSION_TILE_INSIDE_BG_COLOR, # Apply color
+        collapsed_bgcolor=EXPANSION_TILE_HEADER_BG_COLOR, # Apply color
+        controls=[ # Wrap controls in a Column for spacing
+            ft.Column([
+                rename_textfield,
+                rename_button
+            ], spacing=10)
+        ],
+        initially_expanded=False, # Set to False
+    )
 
 def _build_bottom_status_bar():
     """Builds the bottom app bar for status updates."""
@@ -1341,7 +1367,7 @@ def dataset_tab_layout(page=None):
         _build_dataset_selection_section(dataset_dropdown_control_ref.current, update_button_control),
         _build_captioning_section(
             caption_model_dropdown_ref.current,
-            captions_checkbox_container, # Container doesn't need ref passed, handler accesses content's ref
+            captions_checkbox_container,
             cap_command_textfield_ref.current,
             max_tokens_textfield_ref.current,
             dataset_add_captions_button_ref.current,
@@ -1357,7 +1383,7 @@ def dataset_tab_layout(page=None):
         ),
         _build_latent_test_section(), # Placeholder
         _build_rename_section(rename_textfield, thumbnails_grid_ref.current), # Global control, pass grid ref
-    ], spacing=10, width=200, alignment=ft.MainAxisAlignment.START)
+    ], spacing=0, width=200, alignment=ft.MainAxisAlignment.START) # Set spacing to 0 for ExpansionTiles
 
     # Build the bottom status bar
     bottom_app_bar = _build_bottom_status_bar() # Assigns to global bottom_app_bar_ref
@@ -1371,11 +1397,11 @@ def dataset_tab_layout(page=None):
     # Containers for layout structure
     lc = ft.Container(
         content=lc_content,
-        padding=ft.padding.only(top=10, right=0, left=10),
+        padding=ft.padding.only(top=0, right=0, left=5),
     )
     rc = ft.Container(
         content=rc_content,
-        padding=ft.padding.only(top=10, left=0, right=0),
+        padding=ft.padding.only(top=5, left=0, right=0),
         expand=True
     )
 
