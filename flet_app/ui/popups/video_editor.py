@@ -5,6 +5,9 @@ import shutil
 import subprocess
 import cv2
 
+# Import global state from video_player_dialog
+# from .video_player_dialog import _current_video_list_for_dialog, _active_on_caption_updated_callback
+
 def handle_size_add(width_field, height_field, current_video_path, page=None):
     """
     Increase both width and height fields by the closest 32 multiple, maintaining aspect ratio if possible.
@@ -69,7 +72,7 @@ def handle_size_sub(width_field, height_field, current_video_path, page=None):
     if page:
         page.update()
 
-def build_crop_controls_row(page, current_video_path, on_crop, on_crop_all=None, on_get_closest=None):
+def build_crop_controls_row(page, current_video_path, on_crop, on_crop_all=None, on_get_closest=None, video_list: list = None, on_caption_updated_callback: callable = None):
     """
     Build a ResponsiveRow with width/height text fields and Crop/Crop All/Closest buttons.
     Returns (returnBox, width_field, height_field).
@@ -147,22 +150,145 @@ def build_crop_controls_row(page, current_video_path, on_crop, on_crop_all=None,
     crop_buttons_row = ft.ResponsiveRow(
         controls=[crop_all_button, crop_button, closes_button])
 
+
+    # Get video frame count for RangeSlider
+    frame_count = 100 # Default value if video cannot be read
+    if current_video_path and os.path.exists(current_video_path):
+        cap = cv2.VideoCapture(current_video_path)
+        if cap.isOpened():
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+
+    # Range slider for selecting frame range
+    frame_range_slider = ft.RangeSlider(
+        min=0,
+        max=frame_count,
+        start_value=0,
+        end_value=frame_count,
+        divisions=frame_count, # Optional: shows markers for each frame
+        label="{value}",  # Hide label above thumbs
+        round=0, # Display integer frame numbers
+        expand=True,
+        on_change_start=None,
+        on_change=None,
+        on_change_end=None,
+    )
+
+    # Text controls to show start and end values
+    start_value_text = ft.Text(f"Start: {frame_range_slider.start_value}", size=12)
+    end_value_text = ft.Text(f"End: {frame_range_slider.end_value}", size=12)
+    # Text control to show total frames
+    total_frames_text = ft.Text(f"Total: {int(frame_range_slider.end_value - frame_range_slider.start_value)}", size=12)
+    # time_remap_value_text will be updated by time_slider
+    time_remap_value_text = ft.Text(f"Frames after Remap: {frame_count}", size=12)
+
+    # Handlers for RangeSlider events (must be after frame_range_slider is defined)
+    def slider_is_changing(e):
+        start_value_text.value = f"Start: {int(e.control.start_value)}"
+        end_value_text.value = f"End: {int(e.control.end_value)}"
+        total_frames_text.value = f"Total: {int(e.control.end_value - e.control.start_value)}"
+        start_value_text.update()
+        end_value_text.update()
+        total_frames_text.update()
+        frame_range_slider.update()
+
+    frame_range_slider.on_change = slider_is_changing
+
+    # Handler for time_slider
+    def time_slider_is_changing(e):
+        percent = e.control.value
+        remapped_frames = int(frame_count * (percent / 100))
+        time_remap_value_text.value = f"Frames after Remap: {remapped_frames}"
+        time_remap_value_text.update()
+
+    time_slider = ft.Slider(
+        value=100,
+        min=1,
+        max=200,
+        divisions=200,
+        label="{value}%",
+        on_change=time_slider_is_changing,
+    )
+
+    frame_slider = ft.Column(
+        controls=[
+            frame_range_slider,
+            ft.Row([start_value_text, total_frames_text, end_value_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+        ],
+        alignment=ft.MainAxisAlignment.CENTER,
+        spacing=5,
+        col=4
+    )
+
+    # Flip horizontally button
+    flip_horizontal_button = create_styled_button(
+        text="Flip Horizontal",
+        on_click=lambda e: on_flip_horizontal(e, page, current_video_path, video_list, on_caption_updated_callback),
+        col=6,
+        button_style=BTN_STYLE2
+    )
+    cut_to_frames_button = create_styled_button(
+        text="Cut to Frames",
+        on_click=lambda e: cut_to_frames(e, page, current_video_path, frame_range_slider, video_list, on_caption_updated_callback),
+        col=6,
+        button_style=BTN_STYLE2
+    )
+    # Reverse button
+    reverse_button = create_styled_button(
+        text="Reverse",
+        on_click=lambda e: on_reverse(e, page, current_video_path, video_list, on_caption_updated_callback),
+        col=6,
+        button_style=BTN_STYLE2
+    )
+    time_remap_button = create_styled_button(
+        text="Time Remap",
+        on_click=lambda e: on_time_remap(e, page, current_video_path, time_slider, video_list, on_caption_updated_callback),
+        col=6,
+        button_style=BTN_STYLE2
+    )
+
     crop_controls_row = ft.ResponsiveRow(
         controls=[  ft.Column([ft.ResponsiveRow([width_field, add_button]),
                     ft.ResponsiveRow([height_field, substract_button])]),
                     ft.Column([crop_buttons_row])],
         alignment=ft.MainAxisAlignment.CENTER,
-        spacing=10,
-        col=5
+        spacing=5,
+        col=4,
+        scale=0.9
     )
-    time_controls_row = ft.ResponsiveRow(
-        controls=[ft.Text("Time")],
+
+    frame_controls_column = ft.Column(
+        controls=[frame_slider,ft.ResponsiveRow([flip_horizontal_button, cut_to_frames_button])],
         alignment=ft.MainAxisAlignment.CENTER,
-        spacing=10,
-        col=7
+        spacing=5,
+        col=4,
+        scale=0.9
     )
+
+    # Restore original time_controls_column layout with slider, remap text, and buttons
+    time_controls_column = ft.Column(
+        controls=[
+            ft.ResponsiveRow([
+                time_slider,
+                ft.Row([time_remap_value_text], 
+                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=5
+                )
+            ]),
+            ft.ResponsiveRow([reverse_button, time_remap_button])
+        ],
+        alignment=ft.MainAxisAlignment.CENTER,
+        spacing=5,
+        col=4,
+        scale=0.9
+    )
+    
     returnBox = ft.ResponsiveRow(
-        controls=[crop_controls_row, time_controls_row])
+        controls=[crop_controls_row,
+                  frame_controls_column,
+                  time_controls_column],
+                  spacing=3
+                  )
     return returnBox, width_field, height_field
 
 
@@ -189,16 +315,379 @@ def handle_set_closest_div32(width_field, height_field, current_video_path, page
     if page:
         page.update()
 
-def handle_crop_all_videos(page: ft.Page, width_field, height_field, video_list):
+def on_flip_horizontal(e, page: ft.Page, current_video_path: str, video_list: list, on_caption_updated_callback: callable):
+    """
+    Flips the current video horizontally using FFmpeg and replaces the original file.
+    """
+    if not current_video_path or not os.path.exists(current_video_path):
+        print("No video path or file not found.")
+        return
+
+    temp_output_dir = os.path.join(os.path.dirname(__file__), "..", "..", "storage", "temp")
+    os.makedirs(temp_output_dir, exist_ok=True)
+    ffmpeg_exe = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ffmpeg", "bin", "ffmpeg.exe"))
+
+    if not os.path.exists(ffmpeg_exe):
+        print("FFmpeg executable not found!")
+        return
+
+    input_abs_path = os.path.abspath(current_video_path)
+    ffmpeg_output_path = os.path.join(temp_output_dir, f"ffmpeg_flipped_{os.path.basename(current_video_path)}")
+    output_abs_path = os.path.abspath(ffmpeg_output_path)
+
+    cmd_list = [
+        ffmpeg_exe, "-y", "-i", input_abs_path,
+        "-vf", "hflip", # Horizontal flip filter
+        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        output_abs_path
+    ]
+
+    print(f"Running FFmpeg: {' '.join(cmd_list)}")
+
+    try:
+        process = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        stdout, stderr = process.communicate()
+        ffmpeg_result = process.returncode
+        print(f"FFmpeg return code: {ffmpeg_result}")
+        print(f"FFmpeg stderr: {stderr.decode('utf-8', errors='ignore')}")
+
+        if ffmpeg_result != 0 or not os.path.exists(output_abs_path):
+            print("FFmpeg failed or output file not created.")
+            return
+
+        # Replace original file with flipped video
+        shutil.move(output_abs_path, input_abs_path)
+        print(f"Successfully flipped and replaced {current_video_path}")
+
+    except FileNotFoundError:
+        print("FFmpeg executable not found!")
+        return
+    except Exception as e:
+        print(f"Exception running FFmpeg: {e}")
+        if os.path.exists(output_abs_path):
+            try:
+                os.remove(output_abs_path)
+            except Exception:
+                pass
+        return
+
+    # --- Update UI: Refresh video player and thumbnails ---
+    if page:
+        try:
+            from ui.popups.video_player_dialog import open_video_captions_dialog
+            from ui.tab_dataset_view import update_thumbnails, thumbnails_grid_ref, selected_dataset
+            from ui.utils.utils_datasets import regenerate_all_thumbnails_for_dataset
+
+            # Try to get the dataset name from the video path
+            dataset_name = None
+            if current_video_path:
+                # e.g., workspace/datasets/<dataset_name>/<video_file>
+                parts = os.path.normpath(current_video_path).split(os.sep)
+                if "datasets" in parts:
+                    idx = parts.index("datasets")
+                    if idx + 1 < len(parts):
+                        dataset_name = parts[idx + 1]
+
+            # Regenerate all thumbnails for this dataset
+            if dataset_name:
+                try:
+                    regenerate_all_thumbnails_for_dataset(dataset_name)
+                except Exception as thumb_exc:
+                    print(f"Could not regenerate all thumbnails: {thumb_exc}")
+
+            # Refresh the video popup if possible
+            open_video_captions_dialog(page, current_video_path, video_list, on_caption_updated_callback)
+
+            # Update thumbnails for the dataset if possible
+            if dataset_name and thumbnails_grid_ref.current:
+                update_thumbnails(page_ctx=page, grid_control=thumbnails_grid_ref.current, force_refresh=True)
+                thumbnails_grid_ref.current.update()
+                page.update()
+
+        except Exception as e:
+            print(f"Could not refresh video player or thumbnails: {e}")
+
+        page.update()
+
+def on_reverse(e, page: ft.Page, current_video_path: str, video_list: list, on_caption_updated_callback: callable):
+    """
+    Reverses the current video using FFmpeg and replaces the original file.
+    """
+    import json
+    if not current_video_path or not os.path.exists(current_video_path):
+        print("No video path or file not found.")
+        return
+
+    temp_output_dir = os.path.join(os.path.dirname(__file__), "..", "..", "storage", "temp")
+    os.makedirs(temp_output_dir, exist_ok=True)
+    ffmpeg_exe = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ffmpeg", "bin", "ffmpeg.exe"))
+
+    if not os.path.exists(ffmpeg_exe):
+        print("FFmpeg executable not found!")
+        return
+
+    input_abs_path = os.path.abspath(current_video_path)
+    ffmpeg_output_path = os.path.join(temp_output_dir, f"ffmpeg_reversed_{os.path.basename(current_video_path)}")
+    output_abs_path = os.path.abspath(ffmpeg_output_path)
+
+    # FFmpeg command to reverse video
+    cmd_list = [
+        ffmpeg_exe, "-y", "-i", input_abs_path,
+        "-vf", "reverse", # Reverse video filter
+        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        output_abs_path
+    ]
+
+    print(f"Running FFmpeg: {' '.join(cmd_list)}")
+
+    try:
+        process = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        stdout, stderr = process.communicate()
+        ffmpeg_result = process.returncode
+        print(f"FFmpeg return code: {ffmpeg_result}")
+        print(f"FFmpeg stderr: {stderr.decode('utf-8', errors='ignore')}")
+
+        if ffmpeg_result != 0 or not os.path.exists(output_abs_path):
+            print("FFmpeg failed or output file not created.")
+            return
+
+        # Replace original file with reversed video
+        shutil.move(output_abs_path, input_abs_path)
+        print(f"Successfully reversed and replaced {current_video_path}")
+
+    except FileNotFoundError:
+        print("FFmpeg executable not found!")
+        return
+    except Exception as e:
+        print(f"Exception running FFmpeg: {e}")
+        if os.path.exists(output_abs_path):
+            try:
+                os.remove(output_abs_path)
+            except Exception:
+                pass
+        return
+
+    # --- Update info.json (optional, but good practice to re-read/write) ---
+    video_dir = os.path.dirname(input_abs_path)
+    info_json_path = os.path.join(video_dir, 'info.json')
+    info_data = {}
+    if os.path.exists(info_json_path):
+        try:
+            with open(info_json_path, 'r', encoding='utf-8') as f:
+                info_data = json.load(f)
+        except Exception:
+            info_data = {}
+    video_filename = os.path.basename(input_abs_path)
+    if video_filename not in info_data:
+        info_data[video_filename] = {}
+    # Re-read frames and fps just in case (reversing shouldn't change them)
+    try:
+        cap = cv2.VideoCapture(input_abs_path)
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        cap.release()
+        info_data[video_filename]['frames'] = frame_count
+        info_data[video_filename]['fps'] = fps
+        info_data[video_filename]['width'] = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        info_data[video_filename]['height'] = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    except Exception:
+        pass
+    try:
+        with open(info_json_path, 'w', encoding='utf-8') as f:
+            json.dump(info_data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+    # --- End update info.json ---
+
+    # --- Update UI: Refresh video player and thumbnails ---
+    if page:
+        try:
+            from ui.popups.video_player_dialog import open_video_captions_dialog
+            from ui.tab_dataset_view import update_thumbnails, thumbnails_grid_ref, selected_dataset
+            from ui.utils.utils_datasets import regenerate_all_thumbnails_for_dataset
+
+            # Try to get the dataset name from the video path
+            dataset_name = None
+            if current_video_path:
+                # e.g., workspace/datasets/<dataset_name>/<video_file>
+                parts = os.path.normpath(current_video_path).split(os.sep)
+                if "datasets" in parts:
+                    idx = parts.index("datasets")
+                    if idx + 1 < len(parts):
+                        dataset_name = parts[idx + 1]
+
+            # Regenerate all thumbnails for this dataset
+            if dataset_name:
+                try:
+                    regenerate_all_thumbnails_for_dataset(dataset_name)
+                except Exception as thumb_exc:
+                    print(f"Could not regenerate all thumbnails: {thumb_exc}")
+
+            # Refresh the video popup if possible
+            open_video_captions_dialog(page, current_video_path, video_list, on_caption_updated_callback)
+
+            # Update thumbnails for the dataset if possible
+            if dataset_name and thumbnails_grid_ref.current:
+                update_thumbnails(page_ctx=page, grid_control=thumbnails_grid_ref.current, force_refresh=True)
+                thumbnails_grid_ref.current.update()
+                page.update()
+
+        except Exception as e:
+            print(f"Could not refresh video player or thumbnails: {e}")
+
+        page.update()
+
+def on_time_remap(e, page: ft.Page, current_video_path: str, time_slider, video_list: list, on_caption_updated_callback: callable):
+    """
+    Remap the video duration by changing its speed to match the remapped frame count (from time_slider).
+    If remapped_frames < original: speed up (drop frames). If remapped_frames > original: slow down (duplicate frames).
+    """
+    import json
+    if not current_video_path or not os.path.exists(current_video_path):
+        print("No video path or file not found.")
+        return
+
+    # Get original frame count and FPS
+    cap = cv2.VideoCapture(current_video_path)
+    if not cap.isOpened():
+        print("Could not open video file.")
+        return
+    original_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    original_fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+    if original_frames <= 0 or original_fps <= 0:
+        print("Could not get video frame count or FPS.")
+        return
+
+    # Get remapped_frames from the slider
+    percent = time_slider.value
+    remapped_frames = int(original_frames * (percent / 100))
+    if remapped_frames <= 0:
+        print("Remapped frame count is invalid.")
+        return
+    if remapped_frames == original_frames:
+        print("Remapped frame count is the same as the original. No remapping needed.")
+        return
+
+    # Calculate duration and new fps for remapping - these are not directly used in filter
+    # but helpful for understanding
+    # duration = original_frames / original_fps
+    # new_fps_if_duration_same = remapped_frames / duration
+
+    # Use setpts filter to change speed (duration), keeping output FPS the same as original
+    speed_factor_pts = remapped_frames / original_frames
+    filter_str = f"setpts=PTS*{speed_factor_pts}"
+
+    temp_output_dir = os.path.join(os.path.dirname(__file__), "..", "..", "storage", "temp")
+    os.makedirs(temp_output_dir, exist_ok=True)
+    ffmpeg_exe = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ffmpeg", "bin", "ffmpeg.exe"))
+    if not os.path.exists(ffmpeg_exe):
+        print("FFmpeg executable not found!")
+        return
+    input_abs_path = os.path.abspath(current_video_path)
+    ffmpeg_output_path = os.path.join(temp_output_dir, f"ffmpeg_remap_{os.path.basename(current_video_path)}")
+    output_abs_path = os.path.abspath(ffmpeg_output_path)
+
+    cmd_list = [
+        ffmpeg_exe, "-y", "-i", input_abs_path,
+        "-vf", filter_str,
+        "-r", str(original_fps), # Explicitly set output FPS to original
+        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        output_abs_path
+    ]
+    print(f"Running FFmpeg: {' '.join(cmd_list)}")
+    try:
+        process = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        stdout, stderr = process.communicate()
+        ffmpeg_result = process.returncode
+        print(f"FFmpeg return code: {ffmpeg_result}")
+        print(f"FFmpeg stderr: {stderr.decode('utf-8', errors='ignore')}")
+        if ffmpeg_result != 0 or not os.path.exists(output_abs_path):
+            print("FFmpeg failed or output file not created.")
+            return
+        # Replace original file with remapped video
+        shutil.move(output_abs_path, input_abs_path)
+        print(f"Successfully remapped and replaced {current_video_path}")
+    except FileNotFoundError:
+        print("FFmpeg executable not found!")
+        return
+    except Exception as ex:
+        print(f"Exception running FFmpeg: {ex}")
+        if os.path.exists(output_abs_path):
+            try:
+                os.remove(output_abs_path)
+            except Exception:
+                pass
+        return
+
+    # --- Update info.json with new frame count and fps ---
+    video_dir = os.path.dirname(input_abs_path)
+    info_json_path = os.path.join(video_dir, 'info.json')
+    info_data = {}
+    if os.path.exists(info_json_path):
+        try:
+            with open(info_json_path, 'r', encoding='utf-8') as f:
+                info_data = json.load(f)
+        except Exception:
+            info_data = {}
+    video_filename = os.path.basename(input_abs_path)
+    if video_filename not in info_data:
+        info_data[video_filename] = {}
+    try:
+        cap = cv2.VideoCapture(input_abs_path)
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        cap.release()
+        info_data[video_filename]['frames'] = frame_count
+        info_data[video_filename]['fps'] = fps
+    except Exception:
+        pass
+    try:
+        with open(info_json_path, 'w', encoding='utf-8') as f:
+            json.dump(info_data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+    # --- End update info.json ---
+    if page:
+        try:
+            from ui.popups.video_player_dialog import open_video_captions_dialog
+            from ui.tab_dataset_view import update_thumbnails, thumbnails_grid_ref, selected_dataset
+            from ui.utils.utils_datasets import regenerate_all_thumbnails_for_dataset
+            # Try to get the dataset name from the video path
+            dataset_name = None
+            if current_video_path:
+                parts = os.path.normpath(current_video_path).split(os.sep)
+                if "datasets" in parts:
+                    idx = parts.index("datasets")
+                    if idx + 1 < len(parts):
+                        dataset_name = parts[idx + 1]
+            # Regenerate all thumbnails for this dataset
+            if dataset_name:
+                try:
+                    regenerate_all_thumbnails_for_dataset(dataset_name)
+                except Exception as thumb_exc:
+                    print(f"Could not regenerate all thumbnails: {thumb_exc}")
+            # Refresh the video popup if possible
+            open_video_captions_dialog(page, current_video_path, video_list, on_caption_updated_callback)
+            # Update thumbnails for the dataset if possible
+            if dataset_name and thumbnails_grid_ref.current:
+                update_thumbnails(page_ctx=page, grid_control=thumbnails_grid_ref.current, force_refresh=True)
+                thumbnails_grid_ref.current.update()
+                page.update()
+        except Exception as e:
+            print(f"Could not refresh video player or thumbnails: {e}")
+        page.update()
+
+def handle_crop_all_videos(page: ft.Page, width_field, height_field, video_list, on_caption_updated_callback: callable):
     """
     Crops all videos in video_list using the current width/height field values, with scaling up if needed (see handle_crop_video_click).
     """
     if not video_list:
         return
     for video_path in video_list:
-        handle_crop_video_click(page, width_field, height_field, video_path)
+        handle_crop_video_click(page, width_field, height_field, video_path, video_list=video_list, on_caption_updated_callback=on_caption_updated_callback)
 
-def handle_crop_video_click(page: ft.Page, width_field, height_field, current_video_path):
+def handle_crop_video_click(page: ft.Page, width_field, height_field, current_video_path, video_list: list = None, on_caption_updated_callback: callable = None):
     """
     Handles cropping logic: reads dimensions, runs FFmpeg to crop/scale and encode video, and overwrites the original file.
     Now also scales up proportionally if video is smaller than the target dimensions, so smallest side matches target, before cropping.
@@ -330,7 +819,7 @@ def handle_crop_video_click(page: ft.Page, width_field, height_field, current_vi
             except Exception as thumb_exc:
                 print(f"Could not regenerate all thumbnails: {thumb_exc}")
             # Refresh the video popup if possible
-            open_video_captions_dialog(page, current_video_path, [current_video_path])
+            open_video_captions_dialog(page, current_video_path, video_list, on_caption_updated_callback)
             # Update thumbnails for the dataset if possible
             if dataset_name and thumbnails_grid_ref.current:
                 update_thumbnails(page_ctx=page, grid_control=thumbnails_grid_ref.current, force_refresh=True)
@@ -338,4 +827,155 @@ def handle_crop_video_click(page: ft.Page, width_field, height_field, current_vi
                 page.update()
         except Exception as e:
             print(f"Could not refresh video player or thumbnails: {e}")
+        page.update()
+
+def cut_to_frames(e, page: ft.Page, current_video_path: str, frame_range_slider: ft.RangeSlider, video_list: list, on_caption_updated_callback: callable):
+    """
+    Cuts the current video to the specified frame range using FFmpeg and replaces the original file.
+    """
+    if not current_video_path or not os.path.exists(current_video_path):
+        print("No video path or file not found.")
+        return
+
+    try:
+        start_frame = int(frame_range_slider.start_value)
+        end_frame = int(frame_range_slider.end_value)
+        if start_frame >= end_frame:
+            print("Start frame must be less than end frame.")
+            return
+    except ValueError:
+        print("Invalid frame numbers.")
+        return
+
+    # Get frame rate
+    cap = cv2.VideoCapture(current_video_path)
+    if not cap.isOpened():
+        print("Could not open video file.")
+        return
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+
+    if fps <= 0:
+        print("Could not get video frame rate.")
+        return
+
+    temp_output_dir = os.path.join(os.path.dirname(__file__), "..", "..", "storage", "temp")
+    os.makedirs(temp_output_dir, exist_ok=True)
+    ffmpeg_exe = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ffmpeg", "bin", "ffmpeg.exe"))
+
+    if not os.path.exists(ffmpeg_exe):
+        print("FFmpeg executable not found!")
+        return
+
+    input_abs_path = os.path.abspath(current_video_path)
+    ffmpeg_output_path = os.path.join(temp_output_dir, f"ffmpeg_cut_{os.path.basename(current_video_path)}")
+    output_abs_path = os.path.abspath(ffmpeg_output_path)
+
+    # Calculate start and end time in seconds for -ss and -to/t flags
+    # Using -ss after -i for accurate seeking
+    start_time = start_frame / fps
+    end_time = end_frame / fps # Using -to with end_time for inclusive cutting up to that time
+
+    cmd_list = [
+        ffmpeg_exe, "-y", "-i", input_abs_path,
+        "-ss", str(start_time),
+        "-to", str(end_time),
+        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        output_abs_path
+    ]
+
+    print(f"Running FFmpeg: {' '.join(cmd_list)}")
+
+    try:
+        process = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        stdout, stderr = process.communicate()
+        ffmpeg_result = process.returncode
+        print(f"FFmpeg return code: {ffmpeg_result}")
+        print(f"FFmpeg stderr: {stderr.decode('utf-8', errors='ignore')}")
+
+        if ffmpeg_result != 0 or not os.path.exists(output_abs_path):
+            print("FFmpeg failed or output file not created.")
+            return
+
+        # Replace original file with cut video
+        shutil.move(output_abs_path, input_abs_path)
+        print(f"Successfully cut and replaced {current_video_path}")
+
+    except FileNotFoundError:
+        print("FFmpeg executable not found!")
+        return
+    except Exception as e:
+        print(f"Exception running FFmpeg: {e}")
+        if os.path.exists(output_abs_path):
+            try:
+                os.remove(output_abs_path)
+            except Exception:
+                pass
+        return
+
+    # --- Update info.json with new frame count ---
+    import json
+    video_dir = os.path.dirname(input_abs_path)
+    info_json_path = os.path.join(video_dir, 'info.json')
+    info_data = {}
+    if os.path.exists(info_json_path):
+        try:
+            with open(info_json_path, 'r', encoding='utf-8') as f:
+                info_data = json.load(f)
+        except Exception:
+            info_data = {}
+    video_filename = os.path.basename(input_abs_path)
+    if video_filename not in info_data:
+        info_data[video_filename] = {}
+    # Update frame count
+    try:
+        cap = cv2.VideoCapture(input_abs_path)
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.release()
+        info_data[video_filename]['frames'] = frame_count
+    except Exception:
+        pass
+    try:
+        with open(info_json_path, 'w', encoding='utf-8') as f:
+            json.dump(info_data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+    # --- End update info.json ---
+
+    # --- Update UI: Refresh video player and thumbnails ---
+    if page:
+        try:
+            from ui.popups.video_player_dialog import open_video_captions_dialog
+            from ui.tab_dataset_view import update_thumbnails, thumbnails_grid_ref, selected_dataset
+            from ui.utils.utils_datasets import regenerate_all_thumbnails_for_dataset
+
+            # Try to get the dataset name from the video path
+            dataset_name = None
+            if current_video_path:
+                # e.g., workspace/datasets/<dataset_name>/<video_file>
+                parts = os.path.normpath(current_video_path).split(os.sep)
+                if "datasets" in parts:
+                    idx = parts.index("datasets")
+                    if idx + 1 < len(parts):
+                        dataset_name = parts[idx + 1]
+
+            # Regenerate all thumbnails for this dataset
+            if dataset_name:
+                try:
+                    regenerate_all_thumbnails_for_dataset(dataset_name)
+                except Exception as thumb_exc:
+                    print(f"Could not regenerate all thumbnails: {thumb_exc}")
+
+            # Refresh the video popup if possible
+            open_video_captions_dialog(page, current_video_path, video_list, on_caption_updated_callback)
+
+            # Update thumbnails for the dataset if possible
+            if dataset_name and thumbnails_grid_ref.current:
+                update_thumbnails(page_ctx=page, grid_control=thumbnails_grid_ref.current, force_refresh=True)
+                thumbnails_grid_ref.current.update()
+                page.update()
+
+        except Exception as e:
+            print(f"Could not refresh video player or thumbnails: {e}")
+
         page.update()

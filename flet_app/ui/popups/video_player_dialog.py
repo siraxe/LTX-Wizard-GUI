@@ -7,6 +7,8 @@ import shutil # For file operations
 import subprocess # For running FFmpeg more robustly
 from ui._styles import create_textfield, create_styled_button, VIDEO_PLAYER_DIALOG_WIDTH, VIDEO_PLAYER_DIALOG_HEIGHT, BTN_STYLE2
 from flet_video.video import Video, VideoMedia
+import threading  # Add this import for frame counter
+from . import video_editor
 
 # === Data & Utility Functions ===
 
@@ -92,6 +94,10 @@ _active_width_field_instance = None
 _active_height_field_instance = None
 _video_is_playing = [False]  # Global play/pause state, always a list for mutability
 
+# --- Frame counter globals ---
+_frame_update_timer: threading.Timer | None = None
+_dialog_is_open = False  # Add dialog open flag for frame counter
+
 # === GUI-Building Functions ===
 def _video_on_completed(e):
     # Workaround: ensure video is playing after looping
@@ -141,8 +147,9 @@ def _hide_feedback_overlay(stack):
     stack.update()
 
 def build_video_player(video_path: str, autoplay: bool = False):
-    """Create and return a Video player control for the given video path, wrapped in a clickable Container with play/pause feedback."""
-    global _video_feedback_overlay, _video_is_playing
+    """Create and return a Video player control for the given video path, wrapped in a clickable Container with play/pause feedback and frame counter."""
+    global _video_feedback_overlay, _video_is_playing, _frame_update_timer
+    import time
     video = Video(
         playlist=[VideoMedia(resource=video_path)],
         autoplay=autoplay,
@@ -166,6 +173,59 @@ def build_video_player(video_path: str, autoplay: bool = False):
     )
     _video_feedback_overlay = feedback_overlay
 
+    # --- Frame counter logic ---
+    video_fps = 30.0
+    total_frames = 1
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if cap.isOpened():
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            if fps > 0:
+                video_fps = fps
+            tf = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if tf > 0:
+                total_frames = tf
+            cap.release()
+    except Exception as e:
+        print(f"Error getting video FPS or total frame count for {video_path}: {e}")
+
+    frame_counter_text = ft.Text("001 / 001", color=ft.Colors.WHITE70, size=12)
+    video._video_fps = video_fps
+    video._frame_counter_text = frame_counter_text
+    video._total_frames = total_frames
+
+    def _update_frame_counter(video_player: Video, frame_counter_text: ft.Text):
+        global _dialog_is_open
+        import time
+        if video_player is None or frame_counter_text is None:
+            return
+        if not hasattr(video_player, '_video_fps') or video_player._video_fps is None:
+            return
+        effective_fps = video_player._video_fps
+        if not isinstance(effective_fps, (int, float)) or effective_fps <= 0:
+            effective_fps = 30.0
+        while _dialog_is_open:
+            if video_player is None or video_player.page is None:
+                break
+            try:
+                current_position_ms = video_player.get_current_position(wait_timeout=0.2)
+                if current_position_ms is not None:
+                    current_position_ms = max(0, current_position_ms)
+                    current_frame = int((current_position_ms / 1000.0) * effective_fps)
+                    current_frame = max(0, min(current_frame, total_frames-1))
+                    # Display as 001 / 048
+                    frame_str = f"{current_frame+1:03d} / {total_frames:03d}"
+                    if frame_counter_text.page:
+                        frame_counter_text.value = frame_str
+                        frame_counter_text.update()
+                else:
+                    if frame_counter_text.page:
+                        frame_counter_text.value = f"--- / {total_frames:03d}"
+                        frame_counter_text.update()
+            except Exception:
+                pass
+            time.sleep(0.1)
+
     # Track play/pause state globally
     _video_is_playing[0] = autoplay
 
@@ -176,7 +236,6 @@ def build_video_player(video_path: str, autoplay: bool = False):
 
     def play_or_pause_with_feedback():
         global _video_is_playing
-        # Toggle our state
         _video_is_playing[0] = not _video_is_playing[0]
         orig_play_or_pause()
         show_feedback(_video_is_playing[0])
@@ -196,11 +255,27 @@ def build_video_player(video_path: str, autoplay: bool = False):
     stack = ft.Stack([
         video,
         feedback_overlay,
-        overlay
+        overlay,
+        ft.Container(
+            content=frame_counter_text,
+            alignment=ft.alignment.bottom_right,
+            margin=ft.margin.only(bottom=16, right=16),
+            bgcolor=ft.Colors.with_opacity(0.0, ft.Colors.BLACK),
+            visible=True,
+            expand=False
+        )
     ], width=VIDEO_PLAYER_DIALOG_WIDTH - 40, height=VIDEO_PLAYER_DIALOG_HEIGHT - 40)
-    # Patch video.play_or_pause to also show feedback
     orig_play_or_pause = video.play_or_pause
     video.play_or_pause = play_or_pause_with_feedback
+
+    # --- Start frame counter thread ---
+    global _frame_update_timer
+    if _frame_update_timer is not None and hasattr(_frame_update_timer, 'is_alive') and _frame_update_timer.is_alive():
+        _frame_update_timer.cancel()
+    _frame_update_timer = threading.Timer(0.1, lambda: _update_frame_counter(video, frame_counter_text))
+    _frame_update_timer.daemon = True
+    _frame_update_timer.start()
+
     return stack
 
 # --- Global flag for caption field focus state
@@ -337,9 +412,12 @@ def handle_update_caption_click(page: ft.Page):
 
 def handle_dialog_dismiss(e):
     """
-    Handles the dialog dismissal event: saves the current caption if the caption field exists.
+    Handles the dialog dismissal event: saves the current caption if the caption field exists and stops the frame counter thread.
     """
-    global _active_caption_field_instance, _current_video_path_for_dialog, _active_on_caption_updated_callback
+    global _active_caption_field_instance, _current_video_path_for_dialog, _active_on_caption_updated_callback, _dialog_is_open, _frame_update_timer
+    _dialog_is_open = False  # Stop frame counter thread
+    if _frame_update_timer is not None and hasattr(_frame_update_timer, 'is_alive') and _frame_update_timer.is_alive():
+        _frame_update_timer.cancel()
     if _active_caption_field_instance and _current_video_path_for_dialog:
         current_caption = _active_caption_field_instance.value.strip()
         # Pass page=None here as page may not be valid after dialog is dismissed
@@ -545,19 +623,19 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
     _active_caption_field_instance = build_caption_field(initial_value=caption_value)
 
     # Import crop controls from video_editor.py
-    from .video_editor import build_crop_controls_row, handle_crop_video_click, handle_crop_all_videos, handle_set_closest_div32
+    # from .video_editor import build_crop_controls_row, handle_crop_video_click, handle_crop_all_videos, handle_set_closest_div32
 
     def on_crop_click(e):
-        page.run_thread(lambda: handle_crop_video_click(page, _active_width_field_instance, _active_height_field_instance, _current_video_path_for_dialog))
+        page.run_thread(lambda: video_editor.handle_crop_video_click(page, _active_width_field_instance, _active_height_field_instance, _current_video_path_for_dialog))
 
     def on_crop_all_click(e):
-        page.run_thread(lambda: handle_crop_all_videos(page, _active_width_field_instance, _active_height_field_instance, _current_video_list_for_dialog))
+        page.run_thread(lambda: video_editor.handle_crop_all_videos(page, _active_width_field_instance, _active_height_field_instance, _current_video_list_for_dialog, _active_on_caption_updated_callback))
 
     def on_get_closest(e):
-        handle_set_closest_div32(_active_width_field_instance, _active_height_field_instance, _current_video_path_for_dialog, page)
+        video_editor.handle_set_closest_div32(_active_width_field_instance, _active_height_field_instance, _current_video_path_for_dialog, page)
 
-    crop_controls_row, _active_width_field_instance, _active_height_field_instance = build_crop_controls_row(
-        page, _current_video_path_for_dialog, on_crop_click, on_crop_all=on_crop_all_click, on_get_closest=on_get_closest)
+    crop_controls_row, _active_width_field_instance, _active_height_field_instance = video_editor.build_crop_controls_row(
+        page, _current_video_path_for_dialog, on_crop_click, on_crop_all=on_crop_all_click, on_get_closest=on_get_closest, video_list=_current_video_list_for_dialog, on_caption_updated_callback=_active_on_caption_updated_callback)
 
     _active_message_container_instance = build_message_container(content=message_control)
 
@@ -579,7 +657,7 @@ def open_video_captions_dialog(page: ft.Page, video_path: str, video_list=None, 
     """
     Opens the video captions dialog for the given video and list.
     """
-    global _active_caption_field_instance
+    global _active_caption_field_instance, _dialog_is_open
     if not video_path:
         return
     if video_list is None:
@@ -587,6 +665,9 @@ def open_video_captions_dialog(page: ft.Page, video_path: str, video_list=None, 
 
     video_filename = os.path.basename(video_path)
     dialog_title_text = f"{video_filename}"
+
+    # Set dialog open flag for frame counter
+    _dialog_is_open = True
 
     main_content_ui, nav_prefix_controls = create_video_player_with_captions_content(page, video_path, video_list, on_caption_updated_callback)
 
