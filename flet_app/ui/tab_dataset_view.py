@@ -48,13 +48,14 @@ max_tokens_textfield_ref = ft.Ref[ft.TextField]()
 # Process tracking for stopping script execution
 current_caption_process = {"proc": None}
 
+# Constant for ExpansionTile border radius
+EXPANSION_TILE_BORDER_RADIUS = 10
 
 # ======================================================================================
 # Data & Utility Functions (File I/O, data parsing, validation)
 # ======================================================================================
 
 def parse_bucket_string_to_list(raw_bucket_str: str) -> list[int] | None:
-    """Parse a bucket size string to a list of integers."""
     raw_bucket_str = raw_bucket_str.strip()
     try:
         if raw_bucket_str.startswith('[') and raw_bucket_str.endswith(']'):
@@ -70,13 +71,11 @@ def parse_bucket_string_to_list(raw_bucket_str: str) -> list[int] | None:
     return None
 
 def format_bucket_list_to_string(bucket_list: list) -> str:
-    """Format a list of bucket size values to a string."""
     if isinstance(bucket_list, list) and len(bucket_list) == 3 and all(isinstance(i, (int, float)) for i in bucket_list):
         return f"[{bucket_list[0]}, {bucket_list[1]}, {bucket_list[2]}]"
     return config.DEFAULT_BUCKET_SIZE_STR
 
 def load_dataset_config(dataset_name: str | None) -> tuple[str, str, str]:
-    """Load bucket size, model name, and trigger word from dataset info.json, or return defaults."""
     bucket_to_set = config.DEFAULT_BUCKET_SIZE_STR
     model_to_set = config.ltx_def_model
     trigger_word_to_set = ''
@@ -103,7 +102,6 @@ def load_dataset_config(dataset_name: str | None) -> tuple[str, str, str]:
     return bucket_to_set, model_to_set, trigger_word_to_set
 
 def save_dataset_config(dataset_name: str, bucket_str: str, model_name: str, trigger_word: str) -> bool:
-    """Save bucket size, model name, and trigger word to dataset info.json."""
     dataset_info_json_path = os.path.join(config.DATASETS_DIR, dataset_name, "info.json")
     parsed_bucket_list = parse_bucket_string_to_list(bucket_str)
     if parsed_bucket_list is None:
@@ -138,7 +136,6 @@ def save_dataset_config(dataset_name: str, bucket_str: str, model_name: str, tri
         return False
 
 def load_processed_map(dataset_name: str) -> dict | None:
-    """Load processed.json for a dataset, or return None."""
     processed_json_path = os.path.join(config.DATASETS_DIR, dataset_name, "preprocessed_data", "processed.json")
     if os.path.exists(processed_json_path):
         try:
@@ -149,7 +146,6 @@ def load_processed_map(dataset_name: str) -> dict | None:
     return None
 
 def load_dataset_captions(dataset_name: str) -> list:
-    """Load captions.json for a dataset, or return empty list."""
     dataset_captions_json_path = os.path.join(config.DATASETS_DIR, dataset_name, "captions.json")
     if os.path.exists(dataset_captions_json_path):
         try:
@@ -160,7 +156,6 @@ def load_dataset_captions(dataset_name: str) -> list:
     return []
 
 def delete_captions_file(dataset_name: str) -> bool:
-    """Delete captions.json for a dataset."""
     captions_file_path = os.path.join(config.DATASETS_DIR, dataset_name, "captions.json")
     if os.path.exists(captions_file_path):
         try:
@@ -171,7 +166,6 @@ def delete_captions_file(dataset_name: str) -> bool:
     return False
 
 def validate_bucket_values(W_val, H_val, F_val) -> list[str]:
-    """Validate bucket size values and return a list of error messages."""
     errors = []
     if W_val is None or not isinstance(W_val, int) or W_val <= 0 or W_val % 32 != 0:
         errors.append(f"Width ({W_val}) must be a positive integer divisible by 32.")
@@ -197,7 +191,6 @@ def build_caption_command(
     instruction: str,
     max_new_tokens: int,
 ) -> str:
-    """Build the command string for the captioning script."""
     python_exe = os.path.normpath(os.path.join("venv", "Scripts", "python.exe"))
     script_file = os.path.normpath("scripts/caption_videos.py")
 
@@ -219,7 +212,6 @@ def build_preprocess_command(
     model_name_val: str,
     trigger_word: str,
 ) -> str:
-    """Build the command string for the preprocessing script."""
     python_exe = os.path.normpath(os.path.join("venv", "Scripts", "python.exe"))
     script_file = os.path.normpath("scripts/preprocess_dataset.py")
 
@@ -239,7 +231,6 @@ def build_preprocess_command(
 # ======================================================================================
 
 def set_bottom_app_bar_height():
-    """Adjust the height of the bottom app bar based on output field visibility."""
     global bottom_app_bar_ref
     if bottom_app_bar_ref is not None and bottom_app_bar_ref.page:
         if processed_output_field.visible:
@@ -259,7 +250,6 @@ async def run_dataset_script_command(
     thumbnails_grid_control=None,
     on_success_callback=None,
 ):
-    """Run a dataset script command asynchronously and update UI with output. Supports stopping."""
     def append_output(text):
         output_field_ref.value += text
         output_field_ref.visible = True
@@ -336,11 +326,6 @@ async def run_dataset_script_command(
 # ======================================================================================
 
 def on_rename_files_click(e: ft.ControlEvent):
-    """
-    Rename all video files in the selected dataset according to the rename_textfield value,
-    appending _01, _02, etc. Update captions.json and info.json if they exist.
-    Provide user feedback via snackbar.
-    """
     current_dataset_name = selected_dataset.get("value")
     if not current_dataset_name:
         if e.page:
@@ -536,7 +521,6 @@ def on_rename_files_click(e: ft.ControlEvent):
 
 
 def on_bucket_or_model_change(e: ft.ControlEvent):
-    """Handle changes to bucket size, model name, or trigger word controls."""
     current_dataset_name = selected_dataset.get("value")
     if not current_dataset_name:
         if e.page:
@@ -581,7 +565,6 @@ def on_bucket_or_model_change(e: ft.ControlEvent):
 
 
 def on_dataset_dropdown_change(ev: ft.ControlEvent, thumbnails_grid_control: ft.GridView, dataset_delete_captions_button_control: ft.ElevatedButton):
-    """Handle dataset dropdown selection change."""
     # Hide output and progress bar when changing dataset
     if processed_output_field.page:
         processed_output_field.visible = False
@@ -616,7 +599,6 @@ def on_dataset_dropdown_change(ev: ft.ControlEvent, thumbnails_grid_control: ft.
 
 
 def on_update_button_click(e: ft.ControlEvent, dataset_dropdown_control, thumbnails_grid_control, add_button, delete_button):
-    """Handle the update dataset list button click."""
     reload_current_dataset(e.page, dataset_dropdown_control, thumbnails_grid_control, add_button, delete_button)
 
 
@@ -628,7 +610,6 @@ def on_add_captions_click_with_model(e: ft.ControlEvent,
                                      dataset_add_captions_button_control: ft.ElevatedButton,
                                      dataset_delete_captions_button_control: ft.ElevatedButton,
                                      thumbnails_grid_control: ft.GridView):
-    """Handle the 'Add Captions' button click, starting the captioning process."""
     # If a process is running, treat as stop
     proc = current_caption_process.get("proc")
     if proc is not None and proc.returncode is None:
@@ -696,7 +677,6 @@ def stop_captioning(e: ft.ControlEvent,
                     add_button: ft.ElevatedButton,
                     delete_button: ft.ElevatedButton,
                     thumbnails_grid_control: ft.GridView):
-    """Attempt to stop the running captioning process."""
     # Try to kill by PID file (more reliable for spawned processes)
     pid_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../scripts/caption_pid.txt')
     killed = False
@@ -769,7 +749,6 @@ def stop_captioning(e: ft.ControlEvent,
 
 
 def on_delete_captions_click(e: ft.ControlEvent, thumbnails_grid_control: ft.GridView):
-    """Handle the 'Delete Captions' button click, showing a confirmation dialog."""
     page_for_dialog = e.page
     button_control = e.control
     current_dataset_name = selected_dataset.get("value")
@@ -810,7 +789,6 @@ def on_delete_captions_click(e: ft.ControlEvent, thumbnails_grid_control: ft.Gri
 
 
 def perform_delete_captions(page_context: ft.Page, thumbnails_grid_control: ft.GridView):
-    """Perform the actual deletion of the captions file after confirmation."""
     current_dataset_name = selected_dataset.get("value")
     if not current_dataset_name:
         return
@@ -829,7 +807,6 @@ def on_preprocess_dataset_click(e: ft.ControlEvent,
                                 model_name_dropdown: ft.Dropdown,
                                 bucket_size_textfield: ft.TextField,
                                 trigger_word_textfield: ft.TextField):
-    """Handle the 'Start Preprocess' button click."""
     current_dataset_name = selected_dataset.get("value")
     if not current_dataset_name:
         if e.page:
@@ -924,7 +901,6 @@ def on_preprocess_dataset_click(e: ft.ControlEvent,
 # ======================================================================================
 
 def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None, force_refresh: bool = False):
-    """Update the thumbnails grid for the selected dataset. If force_refresh is True, use cache-busting temp files."""
     if not grid_control:
         return
 
@@ -1024,7 +1000,6 @@ def update_dataset_dropdown(
     current_thumbnails_grid: ft.GridView,
     delete_button: ft.ElevatedButton # Pass delete button
 ):
-    """Update the dataset dropdown and thumbnails grid when dataset list might have changed."""
     folders = get_dataset_folders()
     folder_names = list(folders.keys()) if folders else []
 
@@ -1066,7 +1041,6 @@ def reload_current_dataset(
     add_button: ft.ElevatedButton,
     delete_button: ft.ElevatedButton
 ):
-    """Reload the currently selected dataset, preserving selection if possible."""
     # Hide output and progress bar on reload
     if processed_output_field.page:
         processed_output_field.visible = False
@@ -1126,10 +1100,29 @@ def reload_current_dataset(
 EXPANSION_TILE_HEADER_BG_COLOR = ft.CupertinoColors.with_opacity(0.08, ft.CupertinoColors.ACTIVE_BLUE) # Define a variable for header background color
 EXPANSION_TILE_INSIDE_BG_COLOR = ft.Colors.TRANSPARENT
 
+def _build_expansion_tile(
+    title: str,
+    controls: list[ft.Control],
+    initially_expanded: bool = False,
+):
+    return ft.ExpansionTile(
+        title=ft.Text(title, size=12),
+        bgcolor=EXPANSION_TILE_INSIDE_BG_COLOR,
+        collapsed_bgcolor=EXPANSION_TILE_HEADER_BG_COLOR,
+        controls=[ft.Divider(), ft.Column(controls, spacing=10) ,ft.Divider()], # Wrap controls in a Column
+        initially_expanded=initially_expanded,
+        collapsed_shape=ft.RoundedRectangleBorder(radius=EXPANSION_TILE_BORDER_RADIUS),
+        shape=ft.RoundedRectangleBorder(radius=EXPANSION_TILE_BORDER_RADIUS),
+        enable_feedback=False,
+    )
+
 def _create_global_controls():
-    """Creates and initializes the global UI controls."""
     global bucket_size_textfield, rename_textfield, model_name_dropdown, trigger_word_textfield
     # Note: processed_progress_bar and processed_output_field are already global and initialized
+
+    # Check if controls are already initialized to prevent re-creation
+    if bucket_size_textfield is not None:
+        return # Controls already exist
 
     bucket_size_textfield = create_textfield(
         label="Bucket Size (e.g., [W, H, F] or WxHxF)",
@@ -1161,131 +1154,83 @@ def _create_global_controls():
     model_name_dropdown.on_change = on_bucket_or_model_change
     trigger_word_textfield.on_change = on_bucket_or_model_change
 
-
 def _build_dataset_selection_section(dataset_dropdown_control: ft.Dropdown, update_button_control: ft.IconButton):
-    """Builds the section for selecting and updating the dataset."""
-    return ft.Row([
-        ft.Container(content=dataset_dropdown_control, expand=True, width=160),
-        ft.Container(content=update_button_control, alignment=ft.alignment.center_right, width=40)
-    ])
-
+    return ft.Column([
+        ft.Container(height=10), # Add a divider above the first row
+        ft.Row([
+            ft.Container(content=dataset_dropdown_control, expand=True, width=160),
+            ft.Container(content=update_button_control, alignment=ft.alignment.center_right, width=40),
+        ], expand=True), # Make the Row expand horizontally
+        ft.Container(height=3), # Spacer
+        ft.Divider(), # Add a divider below the first row
+    ], spacing=0) # Set spacing to 0 as Row handles spacing
 
 def _build_captioning_section(
     caption_model_dropdown: ft.Dropdown,
-    captions_checkbox_container: ft.Container, # Container for 8-bit checkbox
+    captions_checkbox_container: ft.Container, # Container for 8-bit checkbox (pass container for layout)
     cap_command_textfield: ft.TextField,
     max_tokens_textfield: ft.TextField,
     dataset_add_captions_button_control: ft.ElevatedButton,
-    dataset_delete_captions_button_control: ft.ElevatedButton,
-    thumbnails_grid_control: ft.GridView # Needed for event handlers
-):
-    """Builds the captioning controls section as an ExpansionTile."""
-    # Assign on_click handlers here, as they need access to local controls
-    dataset_add_captions_button_control.on_click = lambda e: on_add_captions_click_with_model(
-        e,
-        caption_model_dropdown,
-        captions_checkbox_container.content, # Pass the actual checkbox control
-        cap_command_textfield,
-        max_tokens_textfield,
-        dataset_add_captions_button_control,
-        dataset_delete_captions_button_control,
-        thumbnails_grid_control
-    )
-    dataset_delete_captions_button_control.on_click = lambda e: on_delete_captions_click(e, thumbnails_grid_control)
-
-    return ft.ExpansionTile(
-        title=ft.Text("1. Captions", size=12),
-        bgcolor=EXPANSION_TILE_INSIDE_BG_COLOR, # Apply color
-        collapsed_bgcolor=EXPANSION_TILE_HEADER_BG_COLOR, # Apply color
-        controls=[ # Wrap controls in a Column for spacing
-            ft.Column([
-                ft.ResponsiveRow([captions_checkbox_container, caption_model_dropdown]),
-                ft.ResponsiveRow([max_tokens_textfield, cap_command_textfield]),
-                ft.Row([
-                    ft.Container(content=dataset_add_captions_button_control, expand=True),
-                    ft.Container(content=dataset_delete_captions_button_control, expand=True)
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                 ft.Container(height=10), # Spacer
-            ], spacing=10)
+    dataset_delete_captions_button_control: ft.ElevatedButton,):
+    # No on_click handlers assigned here anymore
+    return _build_expansion_tile(
+        title="1. Captions",
+        controls=[ # Pass the controls list directly
+            ft.ResponsiveRow([captions_checkbox_container, caption_model_dropdown]), # Removed extra Container around dropdown
+            ft.ResponsiveRow([max_tokens_textfield, cap_command_textfield]),
+            ft.Row([
+                ft.Container(content=dataset_add_captions_button_control, expand=True),
+                ft.Container(content=dataset_delete_captions_button_control, expand=True)
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         ],
         initially_expanded=True, # Set to True
     )
-
 
 def _build_preprocessing_section(
     model_name_dropdown: ft.Dropdown,
     bucket_size_textfield: ft.TextField,
     trigger_word_textfield: ft.TextField,
     dataset_preprocess_button_control: ft.ElevatedButton,
-    thumbnails_grid_control: ft.GridView # Needed for event handler callback
 ):
-    """Builds the preprocessing controls section as an ExpansionTile."""
-    # Assign event handler for preprocess button here, as it needs access to local controls
-    dataset_preprocess_button_control.on_click = lambda e: on_preprocess_dataset_click(
-        e,
-        model_name_dropdown,
-        bucket_size_textfield,
-        trigger_word_textfield
-    )
-    return ft.ExpansionTile(
-        title=ft.Text("2. Preprocess Dataset", size=12),
-        bgcolor=EXPANSION_TILE_INSIDE_BG_COLOR, # Apply color
-        collapsed_bgcolor=EXPANSION_TILE_HEADER_BG_COLOR, # Apply color
-        controls=[ # Wrap controls in a Column for spacing
-            ft.Column([
-                model_name_dropdown,
-                bucket_size_textfield,
-                trigger_word_textfield,
-                dataset_preprocess_button_control,
-                ft.Container(height=10), # Spacer
-            ], spacing=10)
+    # No on_click handlers assigned here anymore
+    # Use the generic function
+    return _build_expansion_tile(
+        title="2. Preprocess Dataset",
+        controls=[ # Pass the controls list directly
+            model_name_dropdown,
+            bucket_size_textfield,
+            trigger_word_textfield,
+            dataset_preprocess_button_control,
+            ft.Container(height=10), # Spacer
         ],
         initially_expanded=False, # Set to False
     )
-
 
 def _build_latent_test_section():
-    """Builds the optional latent test section (currently a placeholder) as an ExpansionTile."""
-    return ft.ExpansionTile(
-        title=ft.Text("3. Test latent", size=12),
-        bgcolor=EXPANSION_TILE_INSIDE_BG_COLOR, # Apply color
-        collapsed_bgcolor=EXPANSION_TILE_HEADER_BG_COLOR, # Apply color
-        controls=[ # Wrap controls in a Column for spacing
-            ft.Column([
-                ft.Text("Test here", size=12),
-                 ft.Container(height=10), # Spacer
-            ], spacing=10)
+    # Use the generic function
+    return _build_expansion_tile(
+        title="3. Test latent",
+        controls=[ # Pass the controls list directly
+            ft.Text("Test here", size=12),
+             ft.Container(height=10), # Spacer
         ],
         initially_expanded=False, # Set to False
     )
 
+def _build_rename_section(rename_textfield: ft.TextField, rename_button: ft.ElevatedButton):
 
-def _build_rename_section(rename_textfield: ft.TextField, thumbnails_grid_control: ft.GridView):
-    """Builds the file renaming section as an ExpansionTile."""
-    # Assign event handler for rename button
-    rename_button = create_styled_button(
-        "Rename files",
-        # Pass thumbnails_grid_control to on_rename_files_click
-        on_click=lambda e: on_rename_files_click(e), # on_rename_files_click uses thumbnails_grid_ref.current
-        tooltip="Rename files",
-        expand=True,
-        button_style=BTN_STYLE2
-    )
-    return ft.ExpansionTile(
-        title=ft.Text("Rename files", size=12),
-        bgcolor=EXPANSION_TILE_INSIDE_BG_COLOR, # Apply color
-        collapsed_bgcolor=EXPANSION_TILE_HEADER_BG_COLOR, # Apply color
-        controls=[ # Wrap controls in a Column for spacing
-            ft.Column([
-                rename_textfield,
-                rename_button
-            ], spacing=10)
+    # No on_click handlers assigned here anymore
+    # Use the generic function
+    return _build_expansion_tile(
+        title="Rename files",
+        controls=[ # Pass the controls list directly
+            rename_textfield,
+            rename_button
         ],
         initially_expanded=False, # Set to False
     )
 
 def _build_bottom_status_bar():
-    """Builds the bottom app bar for status updates."""
     global bottom_app_bar_ref # Need to assign to the global ref
     bottom_app_bar = ft.BottomAppBar(
         bgcolor=ft.Colors.BLUE_GREY_900,
@@ -1309,7 +1254,6 @@ def _build_bottom_status_bar():
 # ======================================================================================
 
 def dataset_tab_layout(page=None):
-    """Build the main dataset tab layout."""
     global bottom_app_bar_ref # Need to assign to the global ref
     p_page = page # Alias for clarity
 
@@ -1317,9 +1261,10 @@ def dataset_tab_layout(page=None):
     if bucket_size_textfield is None: # Check one of the global controls
         _create_global_controls()
 
-    # Create controls specific to this layout function scope
+    # --- Create Controls ---
     folders = get_dataset_folders()
     folder_names = list(folders.keys()) if folders else []
+
     dataset_dropdown_control = create_dropdown(
         "Select dataset",
         selected_dataset["value"],
@@ -1330,24 +1275,8 @@ def dataset_tab_layout(page=None):
     # Assign the created control to the global ref AFTER creation
     dataset_dropdown_control_ref.current = dataset_dropdown_control
 
-    dataset_dropdown_control.disabled = len(folder_names) == 0
-     # Assign dataset dropdown change handler
-    dataset_dropdown_control.on_change = lambda ev: on_dataset_dropdown_change(
-        ev,
-        thumbnails_grid_ref.current,
-        dataset_delete_captions_button_ref.current # Pass delete button ref's current value
-    )
-
-
     update_button_control = ft.IconButton(
         icon=ft.Icons.REFRESH, tooltip="Update dataset list",
-        on_click=lambda e: reload_current_dataset( # Call reload_current_dataset directly
-            e.page,
-            dataset_dropdown_control_ref.current,
-            thumbnails_grid_ref.current,
-            dataset_add_captions_button_ref.current,
-            dataset_delete_captions_button_ref.current
-        ),
         style=ft.ButtonStyle(padding=ft.padding.symmetric(horizontal=8)), icon_size=20
     )
 
@@ -1359,10 +1288,9 @@ def dataset_tab_layout(page=None):
         spacing=7, run_spacing=7, controls=[], expand=True
     )
 
-
     # Captioning specific controls
     caption_model_dropdown = create_dropdown(
-        "Captioning Model", 
+        "Captioning Model",
         config.captions_def_model,  # default
         config.captions, # Use config.captions dictionary directly
         "Select a captioning model",
@@ -1401,13 +1329,10 @@ def dataset_tab_layout(page=None):
     # Assign to ref
     max_tokens_textfield_ref.current = max_tokens_textfield
 
-
     # Captioning action buttons
-    # Need to define delete button before add button for the stop logic reference
     dataset_delete_captions_button_control = create_styled_button(
         "Delete",
         ref=dataset_delete_captions_button_ref, # Assign ref - Valid for ft.ElevatedButton (assuming create_styled_button returns one and passes kwargs)
-        # on_click handler assigned in _build_captioning_section
         tooltip="Delete the captions.json file",
         expand=True, # Make it expandable for layout
         button_style=BTN_STYLE2,
@@ -1415,23 +1340,19 @@ def dataset_tab_layout(page=None):
     # Assign to ref
     dataset_delete_captions_button_ref.current = dataset_delete_captions_button_control
 
-
     dataset_add_captions_button_control = create_styled_button(
         "Add Captions",
         ref=dataset_add_captions_button_ref, # Assign ref - Valid for ft.ElevatedButton (assuming create_styled_button returns one and passes kwargs)
-        # on_click handler assigned in _build_captioning_section
         button_style=BTN_STYLE2,
         expand=True
     )
     # Assign to ref
     dataset_add_captions_button_ref.current = dataset_add_captions_button_control
 
-
     # Preprocessing specific button (uses global controls bucket_size_textfield, model_name_dropdown, trigger_word_textfield)
     dataset_preprocess_button_control = create_styled_button(
         "Start Preprocess ",
         ref=dataset_preprocess_button_ref, # Assign ref - Valid for ft.ElevatedButton
-        # on_click handler assigned in _build_preprocessing_section
         tooltip="Preprocess dataset using captions.json",
         expand=True,
         button_style=BTN_STYLE2
@@ -1439,29 +1360,82 @@ def dataset_tab_layout(page=None):
     # Assign to ref
     dataset_preprocess_button_ref.current = dataset_preprocess_button_control
 
+    # Rename specific controls
+    rename_button = create_styled_button(
+        "Rename files",
+        tooltip="Rename files",
+        expand=True,
+        button_style=BTN_STYLE2
+    )
+
+    # --- Assign Event Handlers ---
+    dataset_dropdown_control.on_change = lambda ev: on_dataset_dropdown_change(
+        ev,
+        thumbnails_grid_ref.current,
+        dataset_delete_captions_button_ref.current # Pass delete button ref's current value
+    )
+    update_button_control.on_click = lambda e: reload_current_dataset( # Call reload_current_dataset directly
+        e.page,
+        dataset_dropdown_control_ref.current,
+        thumbnails_grid_ref.current,
+        dataset_add_captions_button_ref.current,
+        dataset_delete_captions_button_ref.current
+    )
+    # Assign on_click handlers for captioning buttons
+    dataset_add_captions_button_control.on_click = lambda e: on_add_captions_click_with_model(
+        e,
+        caption_model_dropdown_ref.current, # Use ref's current value
+        captions_checkbox_ref.current, # Use ref's current value
+        cap_command_textfield_ref.current, # Use ref's current value
+        max_tokens_textfield_ref.current, # Use ref's current value
+        dataset_add_captions_button_ref.current, # Use ref's current value
+        dataset_delete_captions_button_ref.current, # Use ref's current value
+        thumbnails_grid_ref.current # Use ref's current value
+    )
+    dataset_delete_captions_button_control.on_click = lambda e: on_delete_captions_click(e, thumbnails_grid_ref.current) # Use ref's current value
+
+    # Assign on_click handler for preprocess button
+    dataset_preprocess_button_control.on_click = lambda e: on_preprocess_dataset_click(
+        e,
+        model_name_dropdown, # Global control
+        bucket_size_textfield, # Global control
+        trigger_word_textfield # Global control
+    )
+
+    # Assign on_click handler for rename button
+    rename_button.on_click = lambda e: on_rename_files_click(e) # Uses rename_textfield and thumbnails_grid_ref.current internally
+
+    # --- Assemble Sections ---
+    dataset_selection_section = _build_dataset_selection_section(dataset_dropdown_control_ref.current, update_button_control)
+
+    captioning_section = _build_captioning_section(
+        caption_model_dropdown_ref.current,
+        captions_checkbox_container, # Still passing container as it includes styling/layout
+        cap_command_textfield_ref.current,
+        max_tokens_textfield_ref.current,
+        dataset_add_captions_button_ref.current,
+        dataset_delete_captions_button_ref.current,
+    )
+
+    preprocessing_section = _build_preprocessing_section(
+        model_name_dropdown, # Global control
+        bucket_size_textfield, # Global control
+        trigger_word_textfield, # Global control
+        dataset_preprocess_button_ref.current, # Use ref
+    )
+
+    latent_test_section = _build_latent_test_section() # Placeholder
+
+    rename_section = _build_rename_section(rename_textfield, rename_button) # Global control, pass grid ref
 
     # Assemble sections into the left column
     lc_content = ft.Column([
-        _build_dataset_selection_section(dataset_dropdown_control_ref.current, update_button_control),
-        _build_captioning_section(
-            caption_model_dropdown_ref.current,
-            captions_checkbox_container,
-            cap_command_textfield_ref.current,
-            max_tokens_textfield_ref.current,
-            dataset_add_captions_button_ref.current,
-            dataset_delete_captions_button_ref.current,
-            thumbnails_grid_ref.current
-        ),
-        _build_preprocessing_section(
-            model_name_dropdown, # Global control
-            bucket_size_textfield, # Global control
-            trigger_word_textfield, # Global control
-            dataset_preprocess_button_ref.current, # Use ref
-            thumbnails_grid_ref.current # Use ref
-        ),
-        _build_latent_test_section(), # Placeholder
-        _build_rename_section(rename_textfield, thumbnails_grid_ref.current), # Global control, pass grid ref
-    ], spacing=0, width=200, alignment=ft.MainAxisAlignment.START) # Set spacing to 0 for ExpansionTiles
+        dataset_selection_section,
+        captioning_section,
+        preprocessing_section,
+        latent_test_section, # Placeholder
+        rename_section, # Global control, pass grid ref
+    ], spacing=3, width=200, alignment=ft.MainAxisAlignment.START) # Set spacing to 5 for ExpansionTiles
 
     # Build the bottom status bar
     bottom_app_bar = _build_bottom_status_bar() # Assigns to global bottom_app_bar_ref
@@ -1490,7 +1464,6 @@ def dataset_tab_layout(page=None):
         dataset_add_captions_button_ref.current,
         dataset_delete_captions_button_ref.current
     )
-
 
     # Main layout row
     main_container = ft.Row(

@@ -675,19 +675,11 @@ def on_time_remap(e, page: ft.Page, current_video_path: str, time_slider, video_
             print(f"Could not refresh video player or thumbnails: {e}")
         page.update()
 
-def handle_crop_all_videos(page: ft.Page, width_field, height_field, video_list, on_caption_updated_callback: callable):
-    """
-    Crops all videos in video_list using the current width/height field values, with scaling up if needed (see handle_crop_video_click).
-    """
-    if not video_list:
-        return
-    for video_path in video_list:
-        handle_crop_video_click(page, width_field, height_field, video_path, video_list=video_list, on_caption_updated_callback=on_caption_updated_callback)
-
-def handle_crop_video_click(page: ft.Page, width_field, height_field, current_video_path, video_list: list = None, on_caption_updated_callback: callable = None):
+def handle_crop_video_click(page: ft.Page, width_field, height_field, current_video_path, video_list: list = None, on_caption_updated_callback: callable = None, should_update_ui: bool = True):
     """
     Handles cropping logic: reads dimensions, runs FFmpeg to crop/scale and encode video, and overwrites the original file.
     Now also scales up proportionally if video is smaller than the target dimensions, so smallest side matches target, before cropping.
+    Includes option to skip UI updates if called as part of batch processing.
     """
     if not width_field or not height_field or not current_video_path:
         return
@@ -795,7 +787,7 @@ def handle_crop_video_click(page: ft.Page, width_field, height_field, current_vi
     except Exception:
         pass
     # --- End update info.json ---
-    if page:
+    if page and should_update_ui: # Only update UI if flag is True
         # --- Force video player popup to reload the current video ---
         try:
             from ui.popups.video_player_dialog import open_video_captions_dialog
@@ -824,7 +816,67 @@ def handle_crop_video_click(page: ft.Page, width_field, height_field, current_vi
                 page.update()
         except Exception as e:
             print(f"Could not refresh video player or thumbnails: {e}")
-        page.update()
+        page.update() # This might be redundant if the previous update() calls cover everything, but keeping it for now.
+
+def handle_crop_all_videos(page: ft.Page, width_field, height_field, video_list, on_caption_updated_callback: callable):
+    """
+    Crops all videos in video_list using the current width/height field values, with scaling up if needed (see handle_crop_video_click).
+    Updates UI once after all videos are processed.
+    """
+    if not video_list:
+        return
+    # Process each video without updating UI immediately
+    for video_path in video_list:
+        handle_crop_video_click(page, width_field, height_field, video_path, video_list=video_list, on_caption_updated_callback=on_caption_updated_callback, should_update_ui=False)
+
+    # --- Update UI once after all videos are processed ---
+    if page:
+        try:
+            from ui.popups.video_player_dialog import open_video_captions_dialog # Needed for the potential dialog refresh
+            from ui.tab_dataset_view import update_thumbnails, thumbnails_grid_ref, selected_dataset
+            from ui.utils.utils_datasets import regenerate_all_thumbnails_for_dataset
+
+            # Assuming all videos are from the same dataset for simplicity in refreshing
+            # We need the dataset name. We can try to get it from the first video path if video_list is not empty.
+            dataset_name = None
+            if video_list:
+                 # e.g., workspace/datasets/<dataset_name>/<video_file>
+                parts = os.path.normpath(video_list[0]).split(os.sep)
+                if "datasets" in parts:
+                    idx = parts.index("datasets")
+                    if idx + 1 < len(parts):
+                        dataset_name = parts[idx + 1]
+
+            if dataset_name:
+                # Regenerate all thumbnails for this dataset
+                try:
+                    regenerate_all_thumbnails_for_dataset(dataset_name)
+                except Exception as thumb_exc:
+                    print(f"Could not regenerate all thumbnails: {thumb_exc}")
+
+                # Update thumbnails for the dataset if possible
+                if thumbnails_grid_ref.current:
+                    update_thumbnails(page_ctx=page, grid_control=thumbnails_grid_ref.current, force_refresh=True)
+                    thumbnails_grid_ref.current.update()
+
+            # If the video player dialog is open, it might need a refresh to show the state of the LAST video processed.
+            # This might be complex depending on how the dialog manages state. The open_video_captions_dialog function
+            # as called in the original handle_crop_video_click always re-opens/reloads the dialog with the specific video path.
+            # Calling it here after the loop might only refresh the dialog for the last video.
+            # This part might need further refinement based on desired UX - maybe the dialog should close or show progress?
+            # For now, let's try refreshing the dialog for the last video if video_list is not empty.
+            if video_list:
+                 try:
+                    # This will re-open or refresh the dialog with the last video in the list
+                    open_video_captions_dialog(page, video_list[-1], video_list, on_caption_updated_callback)
+                 except Exception as e:
+                     print(f"Could not refresh video player dialog after batch crop: {e}")
+
+
+            page.update()
+
+        except Exception as e:
+            print(f"Could not complete batch UI update after cropping: {e}")
 
 def cut_to_frames(e, page: ft.Page, current_video_path: str, frame_range_slider: ft.RangeSlider, video_list: list, on_caption_updated_callback: callable):
     """
