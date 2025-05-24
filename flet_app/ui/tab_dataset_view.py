@@ -357,18 +357,69 @@ def on_rename_files_click(e: ft.ControlEvent):
 
     dataset_folder_path = os.path.abspath(os.path.join(config.DATASETS_DIR, current_dataset_name))
     video_exts = ['.mp4', '.mov', '.avi', '.webm', '.mkv']
-    video_files = [f for f in os.listdir(dataset_folder_path) if os.path.splitext(f)[1].lower() in video_exts]
-    video_files.sort()  # Ensure consistent order
+    # Get existing video files
+    existing_video_files = {f for f in os.listdir(dataset_folder_path) if os.path.splitext(f)[1].lower() in video_exts}
+    video_files_to_rename = sorted(list(existing_video_files)) # Sort for consistent renaming order
 
-    if not video_files:
+
+    if not video_files_to_rename:
         if e.page:
             e.page.snack_bar = ft.SnackBar(content=ft.Text("No video files found to rename."), open=True)
             e.page.update()
         return
 
+    # --- Validate and clean up captions.json before renaming ---
+    captions_path = os.path.join(dataset_folder_path, "captions.json")
+    if os.path.exists(captions_path):
+        try:
+            with open(captions_path, "r", encoding="utf-8") as f:
+                captions_data = json.load(f)
+
+            initial_caption_count = len(captions_data)
+            cleaned_captions_data = []
+            removed_entries_count = 0
+
+            for entry in captions_data:
+                # Check if the entry is a dictionary and has a 'media_path' key
+                if isinstance(entry, dict) and "media_path" in entry:
+                    media_path_value = entry.get("media_path")
+                    # Check if the media_path value exists as a file in the dataset folder
+                    if media_path_value and os.path.exists(os.path.join(dataset_folder_path, media_path_value)):
+                        cleaned_captions_data.append(entry)
+                    else:
+                        # Log a warning and increment removed count
+                        print(f"Warning: Removing caption entry with invalid media_path: {media_path_value}")
+                        removed_entries_count += 1
+                else:
+                    # Log a warning for invalid entry format
+                    print(f"Warning: Removing invalid caption entry format: {entry}")
+                    removed_entries_count += 1
+
+            if removed_entries_count > 0:
+                # Save the cleaned data back to captions.json
+                with open(captions_path, "w", encoding="utf-8") as f:
+                    json.dump(cleaned_captions_data, f, indent=2, ensure_ascii=False)
+                if e.page:
+                     e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Cleaned up captions.json: Removed {removed_entries_count} invalid entr(y/ies)."), open=True)
+                     e.page.update()
+                captions_data = cleaned_captions_data # Update captions_data to the cleaned version for renaming
+
+        except Exception as ex:
+            if e.page:
+                e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error validating/cleaning captions.json: {ex}"), open=True)
+                e.page.update()
+            # Continue with potentially problematic captions_data, but warn the user
+            print(f"Error validating/cleaning captions.json: {ex}")
+            # If loading failed, initialize captions_data as empty to prevent further errors
+            if 'captions_data' not in locals() or captions_data is None:
+                 captions_data = []
+    else:
+         captions_data = [] # Initialize as empty list if captions.json doesn't exist
+    # -------------------------------------------------------------
+
     # Prepare new names and check for collisions
     new_names = []
-    for idx, old_name in enumerate(video_files, 1):
+    for idx, old_name in enumerate(video_files_to_rename, 1):
         ext = os.path.splitext(old_name)[1]
         new_name = f"{base_name}_{idx:02d}{ext}"
         new_names.append(new_name)
@@ -381,9 +432,9 @@ def on_rename_files_click(e: ft.ControlEvent):
         return
 
     # Ensure no existing file will be overwritten (excluding files being renamed)
-    existing_files_set = set(video_files)
+    # We use the initial set of existing files for this check
     for new_name in new_names:
-        if new_name in existing_files_set and new_name not in [old for old, new in zip(video_files, new_names) if new == new_name]:
+        if new_name in existing_video_files and new_name not in new_names: # Check against original existing files, exclude the new names being created
             if e.page:
                 e.page.snack_bar = ft.SnackBar(content=ft.Text(f"File {new_name} already exists and is not part of this renaming batch. Aborting."), open=True)
                 e.page.update()
@@ -391,37 +442,52 @@ def on_rename_files_click(e: ft.ControlEvent):
 
     # Rename files and build old_to_new map
     old_to_new = {}
-    try:
-        for old_name, new_name in zip(video_files, new_names):
-            old_path = os.path.join(dataset_folder_path, old_name)
-            new_path = os.path.join(dataset_folder_path, new_name)
+    renaming_successful = True
+    for old_name, new_name in zip(video_files_to_rename, new_names):
+        old_path = os.path.join(dataset_folder_path, old_name)
+        new_path = os.path.join(dataset_folder_path, new_name)
+        try:
             os.rename(old_path, new_path)
             old_to_new[old_name] = new_name
-    except Exception as ex:
-        if e.page:
-            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Failed to rename {old_name} to {new_name}: {ex}"), open=True)
-            e.page.update()
-        return # Stop if any rename fails
+        except Exception as ex:
+            renaming_successful = False
+            if e.page:
+                e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Failed to rename {old_name} to {new_name}: {ex}"), open=True)
+                e.page.update()
+            # Decide whether to stop or continue. Stopping is safer to avoid partial renames.
+            return # Stop if any rename fails
 
-    # Update captions.json if exists
-    captions_path = os.path.join(dataset_folder_path, "captions.json")
-    if os.path.exists(captions_path):
+    # Update captions.json if exists (using the potentially cleaned data)
+    if captions_data: # Only proceed if captions_data is not empty after cleanup
         try:
-            with open(captions_path, "r", encoding="utf-8") as f:
-                captions_data = json.load(f)
             changed = False
             # Update filename fields in-place (never duplicate entries)
             for entry in captions_data:
-                for field in ("media_path", "video"): # Check relevant fields
-                    if field in entry and entry[field] in old_to_new:
-                        entry[field] = old_to_new[entry[field]]
-                        changed = True
-            if changed:
-                with open(captions_path, "w", encoding="utf-8") as f:
+                # Check if the entry is a dictionary before accessing keys
+                if isinstance(entry, dict):
+                    for field in ("media_path", "video"): # Check relevant fields
+                        if field in entry and entry[field] in old_to_new:
+                            entry[field] = old_to_new[entry[field]]
+                            changed = True
+
+            # --- Sort captions_data by the new media_path ---
+            # Ensure all entries have a 'media_path' before sorting
+            sortable_entries = [entry for entry in captions_data if isinstance(entry, dict) and "media_path" in entry]
+            non_sortable_entries = [entry for entry in captions_data if not (isinstance(entry, dict) and "media_path" in entry)]
+
+            # Sort the sortable entries
+            sortable_entries.sort(key=lambda x: x.get("media_path", ""))
+
+            # Combine sorted sortable entries and non-sortable entries (though non-sortable should be removed by cleanup)
+            captions_data = sortable_entries + non_sortable_entries
+            # ---------------------------------------------
+            if changed or removed_entries_count > 0: # Save if renamed paths or if entries were removed during cleanup
+                 with open(captions_path, "w", encoding="utf-8") as f:
                     json.dump(captions_data, f, indent=2, ensure_ascii=False)
+
         except Exception as ex:
             if e.page:
-                e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Failed to update captions.json after renaming: {ex}"), open=True)
+                e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Failed to update/sort captions.json after renaming: {ex}"), open=True)
                 e.page.update()
             # Continue as file renaming was successful, but notify user
 
@@ -430,12 +496,22 @@ def on_rename_files_click(e: ft.ControlEvent):
     if os.path.exists(info_path):
         try:
             with open(info_path, "r", encoding="utf-8") as f:
-                info_data = json.load(f)
+                content = f.read()
+                if content.strip():
+                    info_data = json.loads(content)
+                    # Ensure the loaded data is a dictionary
+                    if not isinstance(info_data, dict):
+                        info_data = {}
+                else:
+                    info_data = {}
+
             changed = False
             # If info_data is a dict with video filename keys, rename keys
             if isinstance(info_data, dict):
                 new_info_data = {}
-                for k, v in info_data.items():
+                # Sort the original keys to maintain some order, though info.json structure might vary
+                for k in sorted(info_data.keys()):
+                    v = info_data[k]
                     new_key = old_to_new.get(k, k)
                     new_info_data[new_key] = v
                     if new_key != k:
@@ -452,10 +528,11 @@ def on_rename_files_click(e: ft.ControlEvent):
             # Continue as file renaming was successful, but notify user
 
     # Success feedback and UI update
-    if e.page:
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Renamed {len(video_files)} files successfully."), open=True)
-        update_thumbnails(page_ctx=e.page, grid_control=thumbnails_grid_ref.current, force_refresh=True) # Force refresh to update image sources
-        e.page.update()
+    if renaming_successful:
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Renamed {len(video_files_to_rename)} files successfully."), open=True)
+            update_thumbnails(page_ctx=e.page, grid_control=thumbnails_grid_ref.current, force_refresh=True) # Force refresh to update image sources
+            e.page.update()
 
 
 def on_bucket_or_model_change(e: ft.ControlEvent):
@@ -521,12 +598,21 @@ def on_dataset_dropdown_change(ev: ft.ControlEvent, thumbnails_grid_control: ft.
     if model_name_dropdown: model_name_dropdown.value = model_val if model_val in config.ltx_models else config.ltx_def_model
     if trigger_word_textfield: trigger_word_textfield.value = trigger_word_val or ''
 
+    # Add update calls for the controls
+    if bucket_size_textfield: bucket_size_textfield.update()
+    if model_name_dropdown: model_name_dropdown.update()
+    if trigger_word_textfield: trigger_word_textfield.update()
+
     # Update thumbnails for the new dataset
     update_thumbnails(page_ctx=ev.page, grid_control=thumbnails_grid_control)
 
     # Update delete captions button state
     if dataset_delete_captions_button_control:
         pass # Keep button always enabled
+
+
+    if ev.page:
+        ev.page.update()
 
 
 def on_update_button_click(e: ft.ControlEvent, dataset_dropdown_control, thumbnails_grid_control, add_button, delete_button):
@@ -951,6 +1037,11 @@ def update_dataset_dropdown(
     if bucket_size_textfield: bucket_size_textfield.value = bucket_val
     if model_name_dropdown: model_name_dropdown.value = model_val
     if trigger_word_textfield: trigger_word_textfield.value = trigger_word_val or ''
+
+    # Add update calls for the controls
+    if bucket_size_textfield: bucket_size_textfield.update()
+    if model_name_dropdown: model_name_dropdown.update()
+    if trigger_word_textfield: trigger_word_textfield.update()
 
     # Update thumbnails (will show "Select a dataset...")
     update_thumbnails(page_ctx=p_page, grid_control=current_thumbnails_grid)
