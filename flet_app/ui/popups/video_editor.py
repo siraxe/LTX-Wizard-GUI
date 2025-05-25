@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import cv2
+from ui.popups import video_player_dialog # Import video_player_dialog
 
 def handle_size_add(width_field, height_field, current_video_path, page=None):
     """
@@ -69,7 +70,7 @@ def handle_size_sub(width_field, height_field, current_video_path, page=None):
     if page:
         page.update()
 
-def build_crop_controls_row(page, current_video_path, on_crop, on_crop_all=None, on_get_closest=None, video_list: list = None, on_caption_updated_callback: callable = None):
+def build_crop_controls_row(page, current_video_path, on_crop, on_crop_all=None, on_get_closest=None, video_list: list = None, on_caption_updated_callback: callable = None, video_player_instance = None):
     """
     Build a ResponsiveRow with width/height text fields and Crop/Crop All/Closest buttons.
     Returns (returnBox, width_field, height_field).
@@ -168,7 +169,7 @@ def build_crop_controls_row(page, current_video_path, on_crop, on_crop_all=None,
         expand=True,
         on_change_start=None,
         on_change=None,
-        on_change_end=None,
+        on_change_end=lambda e: video_player_dialog.update_playback_range(video_player_instance, int(e.control.start_value), int(e.control.end_value)),
     )
 
     # Text controls to show start and end values
@@ -592,32 +593,35 @@ def on_time_remap(e, page: ft.Page, current_video_path: str, time_slider, video_
         "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
         output_abs_path
     ]
-    print(f"Running FFmpeg: {' '.join(cmd_list)}")
+    def log_debug(msg):
+        print(msg)
+
+    log_debug(f"Running FFmpeg: {' '.join(cmd_list)}")
     try:
         process = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         stdout, stderr = process.communicate()
         ffmpeg_result = process.returncode
-        print(f"FFmpeg return code: {ffmpeg_result}")
-        print(f"FFmpeg stderr: {stderr.decode('utf-8', errors='ignore')}")
-        if ffmpeg_result != 0 or not os.path.exists(output_abs_path):
-            print("FFmpeg failed or output file not created.")
-            return
-        # Replace original file with remapped video
-        shutil.move(output_abs_path, input_abs_path)
-        print(f"Successfully remapped and replaced {current_video_path}")
+        log_debug(f"FFmpeg return code: {ffmpeg_result}")
+        log_debug(f"FFmpeg stderr: {stderr.decode('utf-8', errors='ignore')}")
     except FileNotFoundError:
-        print("FFmpeg executable not found!")
+        log_debug("FFmpeg executable not found!")
         return
-    except Exception as ex:
-        print(f"Exception running FFmpeg: {ex}")
+    except Exception as e:
+        log_debug(f"Exception running FFmpeg: {e}")
+        return
+    if ffmpeg_result != 0 or not os.path.exists(output_abs_path):
+        log_debug("FFmpeg failed or output file not created.")
+        return
+    try:
+        shutil.move(output_abs_path, input_abs_path)
+    except Exception:
         if os.path.exists(output_abs_path):
             try:
                 os.remove(output_abs_path)
             except Exception:
                 pass
-        return
-
     # --- Update info.json with new frame count and fps ---
+    import json
     video_dir = os.path.dirname(input_abs_path)
     info_json_path = os.path.join(video_dir, 'info.json')
     info_data = {}

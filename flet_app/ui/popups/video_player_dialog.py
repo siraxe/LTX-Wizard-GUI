@@ -94,18 +94,18 @@ _active_width_field_instance = None
 _active_height_field_instance = None
 _video_is_playing = [False]  # Global play/pause state, always a list for mutability
 
+# --- Playback range globals ---
+_playback_start_frame = 0
+_playback_end_frame = -1 # -1 indicates no specific end frame set
+
 # --- Frame counter globals ---
 _frame_update_timer: threading.Timer | None = None
 _dialog_is_open = False  # Add dialog open flag for frame counter
 
 # === GUI-Building Functions ===
 def _video_on_completed(e):
-    # Workaround: ensure video is playing after looping
-    try:
-        if e.control:
-            e.control.play()
-    except Exception:
-        pass
+    # This is called when the video naturally ends. We want to loop within the defined range.
+    handle_video_completed(e.control)
 
 def _video_on_click(e):
     try:
@@ -157,11 +157,11 @@ def build_video_player(video_path: str, autoplay: bool = False):
         height=VIDEO_PLAYER_DIALOG_HEIGHT - 40,
         expand=False,
         show_controls=True,
-        playlist_mode="loop",  # Loop the video when it reaches the end
-        on_completed=_video_on_completed,
+        playlist_mode="none",
+        on_completed=lambda e: handle_video_completed(e.control),
     )
     feedback_overlay = ft.Container(
-        content=ft.Icon(ft.Icons.PLAY_ARROW, size=48, color=ft.Colors.WHITE70),
+        content=ft.Icon(ft.Icons.PAUSE, size=48, color=ft.Colors.WHITE70),
         alignment=ft.alignment.top_right,
         margin=ft.margin.only(top=16, right=16),
         bgcolor=ft.Colors.with_opacity(0.0, ft.Colors.BLACK),
@@ -195,7 +195,7 @@ def build_video_player(video_path: str, autoplay: bool = False):
     video._total_frames = total_frames
 
     def _update_frame_counter(video_player: Video, frame_counter_text: ft.Text):
-        global _dialog_is_open
+        global _dialog_is_open, _playback_start_frame, _playback_end_frame
         import time
         if video_player is None or frame_counter_text is None:
             return
@@ -212,25 +212,34 @@ def build_video_player(video_path: str, autoplay: bool = False):
                 if current_position_ms is not None:
                     current_position_ms = max(0, current_position_ms)
                     current_frame = int((current_position_ms / 1000.0) * effective_fps)
-                    current_frame = max(0, min(current_frame, total_frames-1))
+                    current_frame = max(0, min(current_frame, video_player._total_frames-1))
+
+                    # Check if current frame exceeds end_frame and loop
+                    if _playback_end_frame != -1 and current_frame >= _playback_end_frame:
+                        print(f"Reached end frame {_playback_end_frame}, seeking to start frame {_playback_start_frame}")
+                        video_player.seek(int((_playback_start_frame / effective_fps) * 1000))
+                        video_player.play() # Ensure playback continues after seek
+                        if video_player.page: video_player.update()
+                        current_frame = _playback_start_frame # Update current frame for display immediately
+
                     # Display as 001 / 048
-                    frame_str = f"{current_frame+1:03d} / {total_frames:03d}"
+                    frame_str = f"{current_frame+1:03d} / {video_player._total_frames:03d}"
                     if frame_counter_text.page:
                         frame_counter_text.value = frame_str
                         frame_counter_text.update()
                 else:
                     if frame_counter_text.page:
-                        frame_counter_text.value = f"--- / {total_frames:03d}"
+                        frame_counter_text.value = f"--- / {video_player._total_frames:03d}"
                         frame_counter_text.update()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Error in _update_frame_counter: {e}")
             time.sleep(0.1)
 
     # Track play/pause state globally
     _video_is_playing[0] = autoplay
 
     def show_feedback(is_playing):
-        icon = ft.Icons.PAUSE if is_playing else ft.Icons.PLAY_ARROW
+        icon = ft.Icons.PLAY_ARROW if is_playing else ft.Icons.PAUSE
         color = ft.Colors.WHITE70
         _show_video_feedback_icon(stack, icon, color)
 
@@ -277,6 +286,43 @@ def build_video_player(video_path: str, autoplay: bool = False):
     _frame_update_timer.start()
 
     return stack
+
+# Add a new handler function for video reframing to implement manual looping
+def handle_video_reframing(video_control: Video):
+    """Handler for video reframing to implement manual looping."""
+    global _playback_start_frame, _playback_end_frame
+    try:
+        # This function is now primarily used to seek to the start of the defined range
+        # when the range is updated from the slider.
+        print(f"Reframing video: seeking to start frame {_playback_start_frame}")
+        video_control.seek(int((_playback_start_frame / video_control._video_fps) * 1000)) # Jump to the beginning of the defined range
+        video_control.play()
+        if video_control.page: # Ensure control is mounted before updating
+             video_control.update() # Update the control state if necessary
+    except Exception as e:
+        print(f"Error seeking/restarting video on reframing: {e}")
+
+# Add a new handler function for video completion to implement manual looping
+def handle_video_completed(video_control: Video):
+    """Handler for video completion to implement manual looping."""
+    global _playback_start_frame, _playback_end_frame
+    try:
+        # When the video naturally completes, loop back to the start of the defined range
+        print(f"Video completed, seeking to start frame {_playback_start_frame}")
+        video_control.seek(int((_playback_start_frame / video_control._video_fps) * 1000)) # Jump to the beginning of the defined range
+        video_control.play()
+        if video_control.page: # Ensure control is mounted before updating
+             video_control.update() # Update the control state if necessary
+    except Exception as e:
+        print(f"Error seeking/restarting video on completion: {e}")
+
+def update_playback_range(video_player: Video, start_frame: int, end_frame: int):
+    """Updates the global playback range and seeks the video to the start frame."""
+    global _playback_start_frame, _playback_end_frame
+    _playback_start_frame = start_frame
+    _playback_end_frame = end_frame
+    print(f"Updated playback range: start={_playback_start_frame}, end={_playback_end_frame}")
+    handle_video_reframing(video_player)
 
 # --- Global flag for caption field focus state
 _caption_field_is_focused = False
