@@ -1,7 +1,7 @@
 import flet as ft
 from .pages.training_config import get_training_config_page_content
 from .pages.training_sampling import build_training_sampling_page_content
-from ui.popups import dataset_not_selected
+from ui_popups import dataset_not_selected
 import os
 import yaml
 import subprocess

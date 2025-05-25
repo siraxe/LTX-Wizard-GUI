@@ -6,7 +6,7 @@ import json # To parse video_dims list
 import subprocess # Import subprocess module
 import asyncio # Import asyncio for asynchronous operations
 from .._styles import create_textfield, add_section_title,create_dropdown ,create_styled_button
-from settings import config
+from settings import settings
 from loguru import logger # Import logger for error logging
 from ui.tab_dataset_view import _build_expansion_tile # Import the necessary helper function
 
@@ -290,8 +290,12 @@ def _build_validation_config_section():
     controls.extend(add_section_title("Validation Configuration"))
     
     # Assign controls to global variables and set default value for prompts as a single string
-    prompts_textfield = create_textfield("Prompts","CAKEIFY a person using a knife to cut a cake shaped like bottle of mouthwash",
-                                           hint_text="Enter a single prompt here",multiline=False, min_lines=1, max_lines=3, expand=True, col=8) # Modified to single line input
+    prompts_textfield = create_textfield("Prompts",
+                                            "CAKEIFY a person using a knife to cut a cake shaped like bottle of mouthwash",
+                                            hint_text="Enter each prompt on a new line",
+                                            multiline=True,
+                                            min_lines=3, max_lines=3,
+                                            expand=True, col=8) # Modified to single line input
     negative_prompt_textfield = create_textfield("Negative Prompt", "worst quality, inconsistent motion, blurry, jittery, distorted", multiline=True, min_lines=2, max_lines=5, expand=True, col=4)
     video_dims_textfield = create_textfield("Video Dims", "[512, 512, 49]", hint_text="width, height, frames", expand=True)
     seed_textfield = create_textfield("Seed (Validation)", 42, expand=True)
@@ -318,7 +322,7 @@ def _build_validation_config_section():
 
 def _get_lora_options():
     """Fetches available LoRA models from the config and formats them for the dropdown."""
-    lora_models_path = config.LORA_MODELS_DIR
+    lora_models_path = settings.LORA_MODELS_DIR
     lora_models = {}
     if os.path.exists(lora_models_path):
         for item in os.listdir(lora_models_path):
@@ -380,8 +384,8 @@ def _build_sample_videos_section():
 
     model_source_dropdown = create_dropdown(
         "Model Source",
-        config.ltx_def_model,
-        config.ltx_model_dict,
+        settings.ltx_def_model,
+        settings.ltx_model_dict,
         hint_text="Select model or specify path below",col=3, expand=True
     )
 

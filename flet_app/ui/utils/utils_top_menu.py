@@ -128,12 +128,10 @@ class TopBarUtils:
                 'match_enabled': match_checkbox,
             }
         }
-        import csv
-        import io
         prompts_input = sampling.get('Prompts') or ''
-        reader = csv.reader(io.StringIO(prompts_input), skipinitialspace=True)
-        prompt_list = next(reader, [])
-        prompt_list = [p.strip().strip('"') for p in prompt_list if p.strip()]
+        # Split by lines and remove empty lines and strip whitespace from each line
+        # This assumes each line in the textfield is a separate prompt.
+        prompt_list = [p.strip() for p in prompts_input.splitlines() if p.strip()]
         yaml_dict['validation']['prompts'] = prompt_list
 
         return yaml_dict
@@ -344,19 +342,11 @@ class TopBarUtils:
                 val = flat[yaml_key]
                 if isinstance(control, ft.TextField):
                      if isinstance(val, list):
-                        # Join prompt list with quotes, commas, and newlines for multiline TextField
-                        quoted_prompts = [f'"{str(x)}"'+ ',' for x in val] # Add comma after each quoted prompt
-                        # Remove the last comma before joining with newline
-                        if quoted_prompts:
-                            quoted_prompts[-1] = quoted_prompts[-1].rstrip(',')
-                        control.value = '\n'.join(quoted_prompts)
+                        # Join prompt list with newlines, as each line is a separate prompt
+                        control.value = '\n'.join(str(x) for x in val)
                      else:
-                        # If it's not a list (e.g., single prompt string), set directly, potentially quoting it
-                        if isinstance(val, str):
-                             # If a single string, put quotes around it
-                            control.value = f'"{val}"'
-                        else:
-                            control.value = str(val) if val is not None else ""
+                        # If it's not a list (e.g., single prompt string), set directly
+                        control.value = str(val) if val is not None else ""
             elif yaml_key and yaml_key in flat:
                 val = flat[yaml_key]
                 # If loading interval and it's None, set UI to '0'

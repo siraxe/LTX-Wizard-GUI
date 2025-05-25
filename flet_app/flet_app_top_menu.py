@@ -1,5 +1,5 @@
 import flet as ft
-from ui.popups.about import open_about_dialog
+from ui_popups.about import open_about_dialog
 from ui.utils.utils_top_menu import TopBarUtils
 
 # =====================

@@ -3,11 +3,11 @@ import os
 import json
 import asyncio
 import signal # Added signal import
-from settings import config # Import only the config class
+from settings import settings # Import only the config class
 
 
-from ui.popups.video_player_dialog import open_video_captions_dialog
-from ui.popups.delete_caption_dialog import show_delete_caption_dialog
+from ui_popups.video_player_dialog import open_video_captions_dialog
+from ui_popups.delete_caption_dialog import show_delete_caption_dialog
 from ui._styles import create_dropdown, create_styled_button, create_textfield, BTN_STYLE2
 from ui.utils.utils_datasets import (
     get_dataset_folders,
@@ -73,14 +73,14 @@ def parse_bucket_string_to_list(raw_bucket_str: str) -> list[int] | None:
 def format_bucket_list_to_string(bucket_list: list) -> str:
     if isinstance(bucket_list, list) and len(bucket_list) == 3 and all(isinstance(i, (int, float)) for i in bucket_list):
         return f"[{bucket_list[0]}, {bucket_list[1]}, {bucket_list[2]}]"
-    return config.DEFAULT_BUCKET_SIZE_STR
+    return settings.DEFAULT_BUCKET_SIZE_STR
 
 def load_dataset_config(dataset_name: str | None) -> tuple[str, str, str]:
-    bucket_to_set = config.DEFAULT_BUCKET_SIZE_STR
-    model_to_set = config.ltx_def_model
+    bucket_to_set = settings.DEFAULT_BUCKET_SIZE_STR
+    model_to_set = settings.ltx_def_model
     trigger_word_to_set = ''
     if dataset_name:
-        dataset_info_json_path = os.path.join(config.DATASETS_DIR, dataset_name, "info.json")
+        dataset_info_json_path = os.path.join(settings.DATASETS_DIR, dataset_name, "info.json")
         if os.path.exists(dataset_info_json_path):
             try:
                 with open(dataset_info_json_path, 'r') as f:
@@ -102,41 +102,40 @@ def load_dataset_config(dataset_name: str | None) -> tuple[str, str, str]:
     return bucket_to_set, model_to_set, trigger_word_to_set
 
 def save_dataset_config(dataset_name: str, bucket_str: str, model_name: str, trigger_word: str) -> bool:
-    dataset_info_json_path = os.path.join(config.DATASETS_DIR, dataset_name, "info.json")
+    dataset_info_json_path = os.path.join(settings.DATASETS_DIR, dataset_name, "info.json")
     parsed_bucket_list = parse_bucket_string_to_list(bucket_str)
     if parsed_bucket_list is None:
-        # Attempt to parse default if user input is invalid
-        parsed_bucket_list = parse_bucket_string_to_list(config.DEFAULT_BUCKET_SIZE_STR)
-        # Fallback to hardcoded default if parsing default fails
-        if parsed_bucket_list is None:
-            parsed_bucket_list = [512, 512, 49]
-    bucket_model_to_save = {
-        "size": parsed_bucket_list,
-        "type": model_name,
-        "trigger_word": trigger_word or ''
-    }
-    full_config_data = {}
-    try:
-        if os.path.exists(dataset_info_json_path):
-            with open(dataset_info_json_path, 'r') as f:
-                content = f.read()
-                if content.strip():
-                    full_config_data = json.loads(content)
-                    # Ensure the loaded data is a dictionary
-                    if not isinstance(full_config_data, dict):
-                        full_config_data = {}
-                else:
-                    full_config_data = {}
-        full_config_data["bucket_model"] = bucket_model_to_save
-        os.makedirs(os.path.dirname(dataset_info_json_path), exist_ok=True)
-        with open(dataset_info_json_path, 'w') as f:
-            json.dump(full_config_data, f, indent=4)
-        return True
-    except Exception:
-        return False
+         if e.page:
+            e.page.snack_bar = ft.SnackBar(
+                content=ft.Text(f"Invalid Bucket Size format: '{bucket_str}'. Using default."),
+                open=True
+            )
+            e.page.update()
+            # Continue with default or previous valid value for saving config
+            bucket_str_val = settings.DEFAULT_BUCKET_SIZE_STR # Or load previous valid? Using default for simplicity.
+
+    success = save_dataset_config(
+        dataset_name,
+        bucket_str_val, # Use validated/default value
+        model_name_dropdown.value,
+        trigger_word_textfield.value
+    )
+    if e.page:
+        if success:
+            e.page.snack_bar = ft.SnackBar(
+                content=ft.Text(f"Config saved for {dataset_name}."),
+                open=True
+            )
+        else:
+            e.page.snack_bar = ft.SnackBar(
+                content=ft.Text(f"Error saving config for {dataset_name}"),
+                open=True
+            )
+        e.page.update()
+    return success
 
 def load_processed_map(dataset_name: str) -> dict | None:
-    processed_json_path = os.path.join(config.DATASETS_DIR, dataset_name, "preprocessed_data", "processed.json")
+    processed_json_path = os.path.join(settings.DATASETS_DIR, dataset_name, "preprocessed_data", "processed.json")
     if os.path.exists(processed_json_path):
         try:
             with open(processed_json_path, "r", encoding="utf-8") as f:
@@ -146,7 +145,7 @@ def load_processed_map(dataset_name: str) -> dict | None:
     return None
 
 def load_dataset_captions(dataset_name: str) -> list:
-    dataset_captions_json_path = os.path.join(config.DATASETS_DIR, dataset_name, "captions.json")
+    dataset_captions_json_path = os.path.join(settings.DATASETS_DIR, dataset_name, "captions.json")
     if os.path.exists(dataset_captions_json_path):
         try:
             with open(dataset_captions_json_path, 'r', encoding='utf-8') as f:
@@ -156,7 +155,7 @@ def load_dataset_captions(dataset_name: str) -> list:
     return []
 
 def delete_captions_file(dataset_name: str) -> bool:
-    captions_file_path = os.path.join(config.DATASETS_DIR, dataset_name, "captions.json")
+    captions_file_path = os.path.join(settings.DATASETS_DIR, dataset_name, "captions.json")
     if os.path.exists(captions_file_path):
         try:
             os.remove(captions_file_path)
@@ -340,7 +339,7 @@ def on_rename_files_click(e: ft.ControlEvent):
             e.page.update()
         return
 
-    dataset_folder_path = os.path.abspath(os.path.join(config.DATASETS_DIR, current_dataset_name))
+    dataset_folder_path = os.path.abspath(os.path.join(settings.DATASETS_DIR, current_dataset_name))
     video_exts = ['.mp4', '.mov', '.avi', '.webm', '.mkv']
     # Get existing video files
     existing_video_files = {f for f in os.listdir(dataset_folder_path) if os.path.splitext(f)[1].lower() in video_exts}
@@ -542,7 +541,7 @@ def on_bucket_or_model_change(e: ft.ControlEvent):
             )
             e.page.update()
             # Continue with default or previous valid value for saving config
-            bucket_str_val = config.DEFAULT_BUCKET_SIZE_STR # Or load previous valid? Using default for simplicity.
+            bucket_str_val = settings.DEFAULT_BUCKET_SIZE_STR # Or load previous valid? Using default for simplicity.
 
     success = save_dataset_config(
         current_dataset_name,
@@ -578,7 +577,7 @@ def on_dataset_dropdown_change(ev: ft.ControlEvent, thumbnails_grid_control: ft.
     bucket_val, model_val, trigger_word_val = load_dataset_config(selected_dataset["value"])
     if bucket_size_textfield: bucket_size_textfield.value = bucket_val
     # Ensure loaded model value is a valid choice, otherwise use default
-    if model_name_dropdown: model_name_dropdown.value = model_val if model_val in config.ltx_models else config.ltx_def_model
+    if model_name_dropdown: model_name_dropdown.value = model_val if model_val in settings.ltx_models else settings.ltx_def_model
     if trigger_word_textfield: trigger_word_textfield.value = trigger_word_val or ''
 
     # Add update calls for the controls
@@ -630,7 +629,7 @@ def on_add_captions_click_with_model(e: ft.ControlEvent,
             e.page.update()
         return
 
-    dataset_folder_path = os.path.abspath(os.path.join(config.DATASETS_DIR, current_dataset_name))
+    dataset_folder_path = os.path.abspath(os.path.join(settings.DATASETS_DIR, current_dataset_name))
     output_json_path = os.path.join(dataset_folder_path, "captions.json")
 
     # --- Build the command string using the dedicated helper function ---
@@ -759,7 +758,7 @@ def on_delete_captions_click(e: ft.ControlEvent, thumbnails_grid_control: ft.Gri
             page_for_dialog.update()
         return
 
-    captions_file_path = os.path.join(config.DATASETS_DIR, current_dataset_name, "captions.json")
+    captions_file_path = os.path.join(settings.DATASETS_DIR, current_dataset_name, "captions.json")
     if not os.path.exists(captions_file_path):
         if page_for_dialog:
             page_for_dialog.snack_bar = ft.SnackBar(content=ft.Text(f"Captions for '{current_dataset_name}' not found."), open=True)
@@ -814,8 +813,8 @@ def on_preprocess_dataset_click(e: ft.ControlEvent,
             e.page.update()
         return
 
-    input_captions_json_path = os.path.abspath(os.path.join(config.DATASETS_DIR, current_dataset_name, "captions.json"))
-    preprocess_output_dir = os.path.abspath(os.path.join(config.DATASETS_DIR, current_dataset_name, "preprocessed_data"))
+    input_captions_json_path = os.path.abspath(os.path.join(settings.DATASETS_DIR, current_dataset_name, "captions.json"))
+    preprocess_output_dir = os.path.abspath(os.path.join(settings.DATASETS_DIR, current_dataset_name, "preprocessed_data"))
 
     # Check if captions file exists
     if not os.path.exists(input_captions_json_path):
@@ -946,8 +945,8 @@ def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None
                         content=ft.Column([
                             ft.Image(
                                 src=image_src, # Use temp path if created, otherwise original
-                                width=config.THUMB_TARGET_W,
-                                height=config.THUMB_TARGET_H,
+                                width=settings.THUMB_TARGET_W,
+                                height=settings.THUMB_TARGET_H,
                                 fit=ft.ImageFit.COVER,
                                 border_radius=ft.border_radius.all(5)
                             ),
@@ -970,8 +969,8 @@ def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None
                              ) if page_ctx else None
                          ),
                         tooltip=video_name,
-                        width=config.THUMB_TARGET_W + 10,
-                        height=config.THUMB_TARGET_H + 45, # Adjust height to fit text
+                        width=settings.THUMB_TARGET_W + 10,
+                        height=settings.THUMB_TARGET_H + 45, # Adjust height to fit text
                         padding=5,
                         border=ft.border.all(1, ft.Colors.OUTLINE),
                         border_radius=ft.border_radius.all(5)
@@ -984,7 +983,7 @@ def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None
 
     # Clean up temporary thumbnail files (basic approach - might need more robust handling)
     if force_refresh and current_selection:
-        dataset_folder_path = os.path.abspath(os.path.join(config.DATASETS_DIR, current_selection))
+        dataset_folder_path = os.path.abspath(os.path.join(settings.DATASETS_DIR, current_selection))
         for file_name in os.listdir(dataset_folder_path):
             if file_name.endswith('.jpg') and '.tmp_' in file_name:
                 try:
@@ -1021,7 +1020,7 @@ def update_dataset_dropdown(
     # Update thumbnails (will show "Select a dataset...")
     update_thumbnails(page_ctx=p_page, grid_control=current_thumbnails_grid)
 
-     # Update delete captions button state (disable)
+    # Update delete captions button state (disable)
     if delete_button:
         pass # Keep button always enabled
 
@@ -1063,7 +1062,7 @@ def reload_current_dataset(
         bucket_val, model_val, trigger_word_val = load_dataset_config(prev_selected_name)
         if bucket_size_textfield: bucket_size_textfield.value = bucket_val
         # Ensure loaded model value is a valid choice, otherwise use default
-        if model_name_dropdown: model_name_dropdown.value = model_val if model_val in config.ltx_models else config.ltx_def_model
+        if model_name_dropdown: model_name_dropdown.value = model_val if model_val in settings.ltx_models else settings.ltx_def_model
         if trigger_word_textfield: trigger_word_textfield.value = trigger_word_val or ''
         update_thumbnails(page_ctx=p_page, grid_control=current_thumbnails_grid) # Update thumbnails for the current dataset
         snack_bar_text = f"Dataset '{prev_selected_name}' reloaded."
@@ -1126,7 +1125,7 @@ def _create_global_controls():
 
     bucket_size_textfield = create_textfield(
         label="Bucket Size (e.g., [W, H, F] or WxHxF)",
-        value=config.DEFAULT_BUCKET_SIZE_STR,
+        value=settings.DEFAULT_BUCKET_SIZE_STR,
         expand=True
     )
 
@@ -1139,8 +1138,8 @@ def _create_global_controls():
 
     model_name_dropdown = create_dropdown(
         "Model Name",
-        config.ltx_def_model, # Use config directly
-        {name: name for name in config.ltx_models}, # Use config directly
+        settings.ltx_def_model, # Use config directly
+        {name: name for name in settings.ltx_models}, # Use config directly
         "Select model",
         expand=True
     )
@@ -1283,16 +1282,16 @@ def dataset_tab_layout(page=None):
     # Thumbnail Grid (global ref)
     thumbnails_grid_control = ft.GridView(
         ref=thumbnails_grid_ref, # Assign the global ref
-        runs_count=5, max_extent=config.THUMB_TARGET_W + 20,
-        child_aspect_ratio=(config.THUMB_TARGET_W + 10) / (config.THUMB_TARGET_H + 80), # Adjusted aspect ratio
+        runs_count=5, max_extent=settings.THUMB_TARGET_W + 20,
+        child_aspect_ratio=(settings.THUMB_TARGET_W + 10) / (settings.THUMB_TARGET_H + 80), # Adjusted aspect ratio
         spacing=7, run_spacing=7, controls=[], expand=True
     )
 
     # Captioning specific controls
     caption_model_dropdown = create_dropdown(
         "Captioning Model",
-        config.captions_def_model,  # default
-        config.captions, # Use config.captions dictionary directly
+        settings.captions_def_model,  # default
+        settings.captions, # Use config.captions dictionary directly
         "Select a captioning model",
         expand=True,col=9,
     )

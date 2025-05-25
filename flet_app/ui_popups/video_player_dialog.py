@@ -1,3 +1,4 @@
+# video_player_dialog.py
 import flet as ft
 import os
 import json
@@ -94,13 +95,20 @@ _active_width_field_instance = None
 _active_height_field_instance = None
 _video_is_playing = [False]  # Global play/pause state, always a list for mutability
 
-# --- Playback range globals ---
-_playback_start_frame = 0
-_playback_end_frame = -1 # -1 indicates no specific end frame set
+# Global state for video playback range and reframing
+reframed_playback = False
+_playback_start_frame = -1
+_playback_end_frame = -1
 
 # --- Frame counter globals ---
 _frame_update_timer: threading.Timer | None = None
 _dialog_is_open = False  # Add dialog open flag for frame counter
+
+# --- Video Editor UI Globals ---
+_frame_range_slider_instance: ft.RangeSlider = None
+_start_value_text_instance: ft.Text = None
+_end_value_text_instance: ft.Text = None
+_total_frames_text_instance: ft.Text = None
 
 # === GUI-Building Functions ===
 def _video_on_completed(e):
@@ -196,6 +204,7 @@ def build_video_player(video_path: str, autoplay: bool = False):
 
     def _update_frame_counter(video_player: Video, frame_counter_text: ft.Text):
         global _dialog_is_open, _playback_start_frame, _playback_end_frame
+        global reframed_playback
         import time
         if video_player is None or frame_counter_text is None:
             return
@@ -214,11 +223,19 @@ def build_video_player(video_path: str, autoplay: bool = False):
                     current_frame = int((current_position_ms / 1000.0) * effective_fps)
                     current_frame = max(0, min(current_frame, video_player._total_frames-1))
 
-                    # Check if current frame exceeds end_frame and loop
-                    if _playback_end_frame != -1 and current_frame >= _playback_end_frame:
-                        video_player.seek(int((_playback_start_frame / effective_fps) * 1000))
+                    # Trigger frame right away if triggered by _on_frame_range_change_end from video_editor.py
+                    if reframed_playback:
+                        video_player.seek(int((_playback_start_frame / effective_fps) * 1000)) # Jump to the beginning of the defined range
                         video_player.play() # Ensure playback continues after seek
                         if video_player.page: video_player.update()
+                        reframed_playback = False
+
+                    # Check if current frame exceeds end_frame and loop (could be outdates if triggered by _on_frame_range_change_end from video_editor.py)
+                    if _playback_end_frame != -1 and current_frame >= _playback_end_frame:
+                        video_player.seek(int((_playback_start_frame / effective_fps) * 1000)) # Jump to the beginning of the defined range
+                        video_player.play() # Ensure playback continues after seek
+                        if video_player.page: # Ensure control is mounted before updating
+                             video_player.update() # Update the control state if necessary
                         current_frame = _playback_start_frame # Update current frame for display immediately
 
                     # Display as 001 / 048
@@ -315,14 +332,336 @@ def handle_video_completed(video_control: Video):
     except Exception as e:
         pass
 
+def update_video_player_source(video_player: Video, new_video_path: str):
+    """Update the video player's source to the new video path and update its FPS and total frames."""
+    video_player.playlist = [VideoMedia(resource=new_video_path)]
+    video_player.update()
+
+    # Recalculate and update FPS and total frames for the video player instance
+    video_fps = 30.0
+    total_frames = 1
+    try:
+        cap = cv2.VideoCapture(new_video_path)
+        if cap.isOpened():
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            if fps > 0:
+                video_fps = fps
+            tf = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if tf > 0:
+                total_frames = tf
+            cap.release()
+    except Exception as e:
+        print(f"Error getting video FPS or total frame count for {new_video_path}: {e}")
+
+    video_player._video_fps = video_fps
+    video_player._total_frames = total_frames
+
+    # Also, reset playback range globals to default for the new video
+    global _playback_start_frame, _playback_end_frame
+    _playback_start_frame = 0
+    _playback_end_frame = -1 # -1 indicates no specific end frame set
+
+    # Seek to the beginning of the new video
+    video_player.seek(0)
+
+def update_dialog_title(page: ft.Page, new_video_path: str):
+    """Update the dialog title to the new video's filename."""
+    if hasattr(page, 'base_dialog') and page.base_dialog:
+        page.base_dialog.title_text_control.value = f"{os.path.basename(new_video_path)}"
+        if page.base_dialog.title_text_control.page:
+            page.base_dialog.title_text_control.update()
+
+def update_caption_and_message(video_path: str, caption_field: ft.TextField, message_container: ft.Container):
+    """Load and update the caption field and message container for the given video."""
+    caption_value, message_control = load_caption_for_video(video_path)
+    caption_field.value = caption_value
+    message_container.content = message_control
+    # Ensure updates if controls are on page
+    if caption_field.page:
+        caption_field.update()
+    if message_container.page:
+        message_container.update()
+
+# === End GUI-Building Functions ===
+
+# === Dialog Logic & Event Handlers ===
+
+def switch_video_in_dialog(page: ft.Page, new_video_offset: int):
+    """
+    Switches the dialog to show a different video (prev/next) and updates all relevant controls.
+    Loads the new video player in a background thread to prevent UI freezing.
+    """
+    global _active_video_player_instance, _active_caption_field_instance, _active_message_container_instance
+    global _current_video_list_for_dialog, _current_video_path_for_dialog, _active_on_caption_updated_callback
+    global _last_video_loading_path
+    global _frame_range_slider_instance, _start_value_text_instance, _end_value_text_instance, _total_frames_text_instance
+
+    if not _current_video_list_for_dialog or not _current_video_path_for_dialog:
+        return
+
+    # Save the current caption before switching
+    if _active_caption_field_instance is not None and _current_video_path_for_dialog:
+        current_caption = _active_caption_field_instance.value.strip()
+        # Pass None for the callback when saving on video switch to prevent thumbnail refresh
+        save_caption_for_video(page, _current_video_path_for_dialog, current_caption, None)
+
+    idx = _current_video_list_for_dialog.index(_current_video_path_for_dialog)
+    new_idx = (idx + new_video_offset) % len(_current_video_list_for_dialog)
+    new_video_path = _current_video_list_for_dialog[new_idx]
+    _last_video_loading_path = new_video_path
+    _current_video_path_for_dialog = new_video_path
+
+    def load_and_replace_video():
+        global _active_video_player_instance
+        global _current_video_path_for_dialog, _last_video_loading_path
+
+        if _current_video_path_for_dialog != _last_video_loading_path:
+            return
+
+        try:
+            # Fully rebuild the dialog content and navigation controls
+            main_content_ui, nav_controls = create_video_player_with_captions_content(
+                page, _current_video_path_for_dialog, _current_video_list_for_dialog, _active_on_caption_updated_callback
+            )
+
+            if page and hasattr(page, 'base_dialog') and getattr(page.base_dialog, 'show_dialog', None):
+                page.base_dialog.show_dialog(content=main_content_ui, title=os.path.basename(_current_video_path_for_dialog), new_width=VIDEO_PLAYER_DIALOG_WIDTH, title_prefix_controls=nav_controls)
+                page.dialog = page.base_dialog
+                page.video_dialog_open = True
+                page.video_dialog_hotkey_handler = lambda event: handle_caption_dialog_keyboard(page, event)
+                page.dialog.update()
+            elif page:
+                fallback_alert = ft.AlertDialog(title=ft.Text(os.path.basename(_current_video_path_for_dialog)), content=main_content_ui, actions=[ft.TextButton("Close", on_click=lambda e: fallback_alert.close())], on_dismiss=handle_dialog_dismiss)
+                page.dialog = fallback_alert; fallback_alert.open = True; page.video_dialog_open = True; page.video_dialog_hotkey_handler = lambda event: handle_caption_dialog_keyboard(page, event); page.update()
+        except Exception as e:
+            print(f"Error rebuilding dialog content for video switch: {e}")
+            if page:
+                def show_error_snackbar(error_message):
+                    if page.snack_bar is None:
+                        page.snack_bar = ft.SnackBar(ft.Text(f"Error loading video: {error_message}"), open=True)
+                    else:
+                        page.snack_bar.content = ft.Text(f"Error loading video: {error_message}")
+                        page.snack_bar.open = True
+                    page.update()
+                show_error_snackbar(e)
+
+    if page:
+        load_and_replace_video()
+
+    # Update the frame range slider and text controls
+    frame_count = 100 # Default
+    if new_video_path and os.path.exists(new_video_path):
+        cap = cv2.VideoCapture(new_video_path)
+        if cap.isOpened():
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+
+    if _frame_range_slider_instance:
+        _frame_range_slider_instance.max = frame_count
+        _frame_range_slider_instance.start_value = 0
+        _frame_range_slider_instance.end_value = frame_count
+        _frame_range_slider_instance.divisions = frame_count
+        if _frame_range_slider_instance.page: _frame_range_slider_instance.update() # Update the slider
+
+    if _start_value_text_instance:
+        _start_value_text_instance.value = f"Start: {0}"
+        if _start_value_text_instance.page: _start_value_text_instance.update()
+    if _end_value_text_instance:
+        _end_value_text_instance.value = f"End: {frame_count}"
+        if _end_value_text_instance.page: _end_value_text_instance.update()
+    if _total_frames_text_instance:
+        _total_frames_text_instance.value = f"Total: {frame_count}"
+        if _total_frames_text_instance.page: _total_frames_text_instance.update()
+
+    page.update()
+
+def handle_update_caption_click(page: ft.Page):
+    """
+    Handles the Update button click: saves the caption and updates UI.
+    """
+    global _active_caption_field_instance, _active_message_container_instance, _active_on_caption_updated_callback, _current_video_path_for_dialog
+    new_caption = _active_caption_field_instance.value.strip()
+    save_caption_for_video(page, _current_video_path_for_dialog, new_caption, _active_on_caption_updated_callback)
+    if _active_caption_field_instance and _active_message_container_instance:
+        update_caption_and_message(_current_video_path_for_dialog, _active_caption_field_instance, _active_message_container_instance)
+    if page:
+        page.update()
+
+def handle_dialog_dismiss(e):
+    """
+    Handles the dialog dismissal event: saves the current caption if the caption field exists and stops the frame counter thread.
+    """
+    global _active_caption_field_instance, _current_video_path_for_dialog, _active_on_caption_updated_callback, _dialog_is_open, _frame_update_timer
+    _dialog_is_open = False  # Stop frame counter thread
+    if _frame_update_timer is not None and hasattr(_frame_update_timer, 'is_alive') and _frame_update_timer.is_alive():
+        _frame_update_timer.cancel()
+    if _active_caption_field_instance and _current_video_path_for_dialog:
+        current_caption = _active_caption_field_instance.value.strip()
+        # Pass page=None here as page may not be valid after dialog is dismissed
+        save_caption_for_video(page=None, video_path=_current_video_path_for_dialog, new_caption=current_caption, on_caption_updated_callback=_active_on_caption_updated_callback)
+
+# === Keyboard Event Handler ===
+from ui.flet_hotkeys import AUTO_VIDEO_PLAYBACK, VIDEO_PLAY_PAUSE_KEY, VIDEO_NEXT_KEY, VIDEO_PREV_KEY
+
+
+# === Keyboard Event Handler ===
+def handle_caption_dialog_keyboard(page: ft.Page, e: ft.KeyboardEvent):
+    """
+    Handles keyboard events for the video captions dialog, including play/pause toggle and navigation.
+    Uses keybindings from ui.flet_hotkeys.
+    """
+    try:
+        global _caption_field_is_focused
+        if _caption_field_is_focused:
+            return  # Do not trigger any hotkeys while typing in the caption field
+        # Play/pause
+        if hasattr(e, 'key') and e.key == VIDEO_PLAY_PAUSE_KEY:
+            if _active_video_player_instance is not None:
+                video_ctrl = None
+                try:
+                    video_ctrl = _active_video_player_instance.controls[0] # Assuming stack structure
+                except Exception:
+                    pass
+                if video_ctrl and hasattr(video_ctrl, 'play_or_pause'):
+                    video_ctrl.play_or_pause()
+        # Previous video
+        elif hasattr(e, 'key') and e.key == VIDEO_PREV_KEY:
+            switch_video_in_dialog(page, -1)
+        # Next video
+        elif hasattr(e, 'key') and e.key == VIDEO_NEXT_KEY:
+            switch_video_in_dialog(page, 1)
+    except Exception as ex:
+        print(f"[ERROR] Exception in handle_caption_dialog_keyboard: {ex}")
+
+# --- Main Dialog Construction ---
+def create_video_player_with_captions_content(page: ft.Page, video_path: str, video_list: list, on_caption_updated_callback: callable = None) -> tuple[ft.Column, list[ft.Control]]:
+    """
+    Builds the main content column and navigation controls for the video player with captions dialog.
+    """
+    global _active_video_player_instance, _active_caption_field_instance, _active_message_container_instance
+    global _current_video_list_for_dialog, _current_video_path_for_dialog, _active_on_caption_updated_callback
+    global _last_video_loading_path
+    global _active_width_field_instance, _active_height_field_instance
+    global _frame_range_slider_instance, _start_value_text_instance, _end_value_text_instance, _total_frames_text_instance
+
+    _current_video_path_for_dialog = video_path
+    _current_video_list_for_dialog = video_list
+    _active_on_caption_updated_callback = on_caption_updated_callback
+    _last_video_loading_path = video_path
+
+    nav_controls = build_navigation_controls(
+        lambda e: switch_video_in_dialog(page, -1),
+        lambda e: switch_video_in_dialog(page, 1)
+    )
+
+    _active_video_player_instance = build_video_player(video_path, autoplay=AUTO_VIDEO_PLAYBACK)
+
+    caption_value, message_control = load_caption_for_video(video_path)
+    _active_caption_field_instance = build_caption_field(initial_value=caption_value)
+
+    # Define callbacks for video_editor functions that will be run in a thread
+    def on_crop_click(e):
+        # This will use the handle_crop_video_click from video_editor
+        page.run_thread(lambda: video_editor.handle_crop_video_click(page, _active_width_field_instance, _active_height_field_instance, _current_video_path_for_dialog, video_list=_current_video_list_for_dialog, on_caption_updated_callback=_active_on_caption_updated_callback))
+
+    def on_crop_all_click(e):
+        page.run_thread(lambda: video_editor.handle_crop_all_videos(page, _active_width_field_instance, _active_height_field_instance, _current_video_list_for_dialog, _active_on_caption_updated_callback))
+
+    def on_get_closest(e):
+        # This function is typically synchronous and updates UI fields directly
+        video_editor.handle_set_closest_div32(_active_width_field_instance, _active_height_field_instance, _current_video_path_for_dialog, page)
+
+    (
+        crop_controls_row,
+        _active_width_field_instance, # These are assigned by build_crop_controls_row
+        _active_height_field_instance, # These are assigned by build_crop_controls_row
+        frame_range_slider,
+        start_value_text,
+        end_value_text,
+        total_frames_text,
+    ) = video_editor.build_crop_controls_row(
+        page,
+        video_path,
+        on_crop=on_crop_click, # Uses the on_crop_click defined above
+        on_crop_all=on_crop_all_click,
+        on_get_closest=on_get_closest,
+        video_list=_current_video_list_for_dialog,
+        on_caption_updated_callback=_active_on_caption_updated_callback,
+        video_player_instance=_active_video_player_instance, # Pass the video player instance itself
+    )
+
+    # Store the instances globally
+    _frame_range_slider_instance = frame_range_slider
+    _start_value_text_instance = start_value_text
+    _end_value_text_instance = end_value_text
+    _total_frames_text_instance = total_frames_text
+
+    _active_message_container_instance = build_message_container(content=message_control)
+
+    content_column = ft.Column(
+        controls=[
+            ft.Row([_active_video_player_instance], alignment=ft.MainAxisAlignment.CENTER),
+            _active_caption_field_instance,
+            crop_controls_row, # This row now contains controls built by video_editor
+            ft.Row([
+                _active_message_container_instance
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        ],
+        spacing=10, tight=True,
+        scroll=ft.ScrollMode.ADAPTIVE
+    )
+    return content_column, nav_controls
+
+def open_video_captions_dialog(page: ft.Page, video_path: str, video_list=None, on_caption_updated_callback: callable = None):
+    """
+    Opens the video captions dialog for the given video and list.
+    """
+    global _active_caption_field_instance, _dialog_is_open
+    if not video_path:
+        return
+    if video_list is None:
+        video_list = [video_path]
+
+    video_filename = os.path.basename(video_path)
+    dialog_title_text = f"{video_filename}"
+
+    # Set dialog open flag for frame counter
+    _dialog_is_open = True
+
+    main_content_ui, nav_prefix_controls = create_video_player_with_captions_content(page, video_path, video_list, on_caption_updated_callback)
+
+    desired_width = VIDEO_PLAYER_DIALOG_WIDTH
+
+    if hasattr(page, 'base_dialog') and page.base_dialog:
+        page.base_dialog._on_dismiss_callback = handle_dialog_dismiss
+        page.base_dialog.show_dialog(content=main_content_ui, title=dialog_title_text, new_width=desired_width, title_prefix_controls=nav_prefix_controls)
+        page.dialog = page.base_dialog
+        page.video_dialog_open = True
+        page.video_dialog_hotkey_handler = lambda event: handle_caption_dialog_keyboard(page, event)
+        page.dialog.update()
+
+        # Now that the video player is on the page, update its source (if it's not already playing the correct one)
+        # _active_video_player_instance is built with the correct video_path in create_video_player_with_captions_content
+        # update_video_player_source(_active_video_player_instance, video_path) # May not be needed if autoplay handles it
+
+        update_dialog_title(page, video_path) # Ensure title is correct
+    else:
+        print("Error: Base dialog (PopupDialogBase) not found on page.")
+        fallback_alert = ft.AlertDialog(title=ft.Text(dialog_title_text), content=main_content_ui, actions=[ft.TextButton("Close", on_click=lambda e: fallback_alert.close())], on_dismiss=handle_dialog_dismiss)
+        page.dialog = fallback_alert; fallback_alert.open = True; page.video_dialog_open = True; page.video_dialog_hotkey_handler = lambda event: handle_caption_dialog_keyboard(page, event); page.update()
+
+
 def update_playback_range(video_player: Video, start_frame: int, end_frame: int):
     """Updates the global playback range and seeks the video to the start frame."""
-    global _playback_start_frame, _playback_end_frame
+    global _playback_start_frame, _playback_end_frame, reframed_playback
     _playback_start_frame = start_frame
     _playback_end_frame = end_frame
-    handle_video_reframing(video_player)
+    reframed_playback = True 
+    if video_player and hasattr(video_player, '_video_fps') and video_player._video_fps > 0:
+        seek_time_ms = int((_playback_start_frame / video_player._video_fps) * 1000)
+        video_player.seek(seek_time_ms)
 
-# --- Global flag for caption field focus state
+# --- Global flag for caption field focus state ---
 _caption_field_is_focused = False
 
 def _caption_field_on_focus(e):
@@ -356,378 +695,5 @@ def build_navigation_controls(on_prev, on_next) -> list[ft.Control]:
     right_arrow = ft.IconButton(ft.Icons.ARROW_RIGHT, on_click=on_next, tooltip="Next video", icon_size=20)
     return [left_arrow, right_arrow]
 
-def update_video_player_source(video_player: Video, new_video_path: str):
-    """Update the video player's source to the new video path."""
-    video_player.stop()
-    while video_player.playlist:
-        video_player.playlist_remove(0)
-    video_player.playlist_add(VideoMedia(resource=new_video_path))
-    if video_player.page:
-        video_player.update()
-    video_player.jump_to(0)
-
-def update_dialog_title(page: ft.Page, new_video_path: str):
-    """Update the dialog title to the new video's filename."""
-    if hasattr(page, 'base_dialog') and page.base_dialog:
-        page.base_dialog.title_text_control.value = f"{os.path.basename(new_video_path)}"
-        if page.base_dialog.title_text_control.page:
-            page.base_dialog.title_text_control.update()
-
-def update_caption_and_message(video_path: str, caption_field: ft.TextField, message_container: ft.Container):
-    """Load and update the caption field and message container for the given video."""
-    caption_value, message_control = load_caption_for_video(video_path)
-    caption_field.value = caption_value
-    message_container.content = message_control
-
-# === End GUI-Building Functions ===
-
-# === Dialog Logic & Event Handlers ===
-
-def switch_video_in_dialog(page: ft.Page, new_video_offset: int):
-    """
-    Switches the dialog to show a different video (prev/next) and updates all relevant controls.
-    Loads the new video player in a background thread to prevent UI freezing.
-    """
-    global _active_video_player_instance, _active_caption_field_instance, _active_message_container_instance
-    global _current_video_list_for_dialog, _current_video_path_for_dialog, _active_on_caption_updated_callback
-    global _last_video_loading_path
-
-    if not _current_video_list_for_dialog or not _current_video_path_for_dialog:
-        return
-
-    # Save the current caption before switching
-    if _active_caption_field_instance is not None and _current_video_path_for_dialog:
-        current_caption = _active_caption_field_instance.value.strip()
-        # Pass None for the callback when saving on video switch to prevent thumbnail refresh
-        save_caption_for_video(page, _current_video_path_for_dialog, current_caption, None)
-
-    idx = _current_video_list_for_dialog.index(_current_video_path_for_dialog)
-    new_idx = (idx + new_video_offset) % len(_current_video_list_for_dialog)
-    new_video_path = _current_video_list_for_dialog[new_idx]
-    _last_video_loading_path = new_video_path
-    _current_video_path_for_dialog = new_video_path
-
-    def load_and_replace_video():
-        global _active_video_player_instance
-        global _current_video_path_for_dialog, _last_video_loading_path
-
-        if _current_video_path_for_dialog != _last_video_loading_path:
-            return
-
-        try:
-            # Fully rebuild the dialog content and navigation controls
-            main_content_ui, nav_controls = create_video_player_with_captions_content(
-                page, _current_video_path_for_dialog, _current_video_list_for_dialog, _active_on_caption_updated_callback
-            )
-
-            if page and hasattr(page, 'base_dialog') and getattr(page.base_dialog, 'show_dialog', None):
-                page.base_dialog.show_dialog(content=main_content_ui, title=os.path.basename(_current_video_path_for_dialog), new_width=VIDEO_PLAYER_DIALOG_WIDTH, title_prefix_controls=nav_controls)
-                page.dialog = page.base_dialog
-                page.dialog.update()
-            elif page:
-                fallback_alert = ft.AlertDialog(title=ft.Text(os.path.basename(_current_video_path_for_dialog)), content=main_content_ui, actions=[ft.TextButton("Close", on_click=lambda e: fallback_alert.close())], on_dismiss=handle_dialog_dismiss)
-                page.dialog = fallback_alert; fallback_alert.open = True; page.update()
-        except Exception as e:
-            print(f"Error rebuilding dialog content for video switch: {e}")
-            if page:
-                def show_error_snackbar(error_message):
-                    if page.snack_bar is None:
-                        page.snack_bar = ft.SnackBar(ft.Text(f"Error loading video: {error_message}"), open=True)
-                    else:
-                        page.snack_bar.content = ft.Text(f"Error loading video: {error_message}")
-                        page.snack_bar.open = True
-                    page.update()
-                show_error_snackbar(e)
-
-    if page:
-        load_and_replace_video()
-
-def handle_update_caption_click(page: ft.Page):
-    """
-    Handles the Update button click: saves the caption and updates UI.
-    """
-    global _active_caption_field_instance, _active_message_container_instance, _active_on_caption_updated_callback, _current_video_path_for_dialog
-    new_caption = _active_caption_field_instance.value.strip()
-    save_caption_for_video(page, _current_video_path_for_dialog, new_caption, _active_on_caption_updated_callback)
-    if _active_caption_field_instance and _active_message_container_instance:
-        update_caption_and_message(_current_video_path_for_dialog, _active_caption_field_instance, _active_message_container_instance)
-    if page:
-        page.update()
-
-def handle_dialog_dismiss(e):
-    """
-    Handles the dialog dismissal event: saves the current caption if the caption field exists and stops the frame counter thread.
-    """
-    global _active_caption_field_instance, _current_video_path_for_dialog, _active_on_caption_updated_callback, _dialog_is_open, _frame_update_timer
-    _dialog_is_open = False  # Stop frame counter thread
-    if _frame_update_timer is not None and hasattr(_frame_update_timer, 'is_alive') and _frame_update_timer.is_alive():
-        _frame_update_timer.cancel()
-    if _active_caption_field_instance and _current_video_path_for_dialog:
-        current_caption = _active_caption_field_instance.value.strip()
-        # Pass page=None here as page may not be valid after dialog is dismissed
-        save_caption_for_video(page=None, video_path=_current_video_path_for_dialog, new_caption=current_caption, on_caption_updated_callback=_active_on_caption_updated_callback)
-
-def handle_crop_video_click(page: ft.Page):
-    """
-    Handles the Crop button click: reads dimensions, uses FFmpeg to crop/scale and encode video, and overwrites the original file.
-    """
-    global _active_width_field_instance, _active_height_field_instance, _current_video_path_for_dialog
-
-    if not _active_width_field_instance or not _active_height_field_instance or not _current_video_path_for_dialog:
-        return
-
-    try:
-        target_width = int(_active_width_field_instance.value)
-        target_height = int(_active_height_field_instance.value)
-        if target_width <= 0 or target_height <= 0:
-            raise ValueError("Dimensions must be positive integers.")
-    except ValueError as e:
-        return
-
-    current_video_path = _current_video_path_for_dialog
-
-    # --- FFmpeg crop/resize and encode ---
-    temp_output_dir = os.path.join(os.path.dirname(__file__), "..", "..", "storage", "temp")
-    os.makedirs(temp_output_dir, exist_ok=True)
-    
-    # Construct path to ffmpeg.exe
-    ffmpeg_exe = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ffmpeg", "bin", "ffmpeg.exe"))
-
-    if not os.path.exists(ffmpeg_exe):
-        return
-
-    ffmpeg_output_path = os.path.join(temp_output_dir, f"ffmpeg_cropped_{os.path.basename(current_video_path)}")
-    input_abs_path = os.path.abspath(current_video_path)
-    output_abs_path = os.path.abspath(ffmpeg_output_path)
-    
-    # Use subprocess for FFmpeg for better path handling and error reporting
-    # Use crop filter instead of scale to crop the center of the video
-    crop_filter = f"crop={target_width}:{target_height}"
-    cmd_list = [
-        ffmpeg_exe, "-y", "-i", input_abs_path,
-        "-vf", crop_filter,
-        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-        output_abs_path
-    ]
-    def log_debug(msg):
-        with open("crop_debug.log", "a", encoding="utf-8") as f:
-            f.write(msg + "\n")
-        print(msg)
-
-    log_debug(f"Running FFmpeg: {' '.join(cmd_list)}")
-    try:
-        process = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-        stdout, stderr = process.communicate()
-        ffmpeg_result = process.returncode
-        log_debug(f"FFmpeg return code: {ffmpeg_result}")
-        log_debug(f"FFmpeg stderr: {stderr.decode('utf-8', errors='ignore')}")
-    except FileNotFoundError:
-        log_debug("FFmpeg executable not found!")
-        return
-    except Exception as e_subproc:
-        log_debug(f"Exception running FFmpeg: {e_subproc}")
-        return
-
-    if ffmpeg_result != 0 or not os.path.exists(output_abs_path):
-        log_debug("FFmpeg failed or output file not created.")
-        return
-
-    move_success = False
-    try:
-        shutil.move(output_abs_path, input_abs_path)
-        move_success = True
-    except Exception as e_move:
-        if os.path.exists(output_abs_path):
-            try:
-                os.remove(output_abs_path)
-            except Exception as e_remove:
-                pass
-        # Do not return here; attempt info.json update for debugging
-
-    # --- Update info.json --- 
-    info_json_dir = os.path.dirname(input_abs_path)
-    info_json_path = os.path.join(info_json_dir, "info.json")
-
-    new_frame_count = 0
-    try:
-        new_cap = cv2.VideoCapture(input_abs_path)
-        if new_cap.isOpened():
-            new_frame_count = int(new_cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            new_cap.release()
-        else:
-            pass
-    except Exception as e_cap:
-        pass
-
-    info_data = {}
-    if os.path.exists(info_json_path):
-        try:
-            with open(info_json_path, 'r', encoding='utf-8') as f:
-                info_data = json.load(f)
-        except Exception as e_read:
-            pass
-
-    # Preserve specified fields if they exist
-    preserved_type = info_data.get("type")
-    preserved_trigger_word = info_data.get("trigger_word")
-
-    # Update only the entry for the current video file
-    video_filename = os.path.basename(input_abs_path)
-    info_data[video_filename] = {
-        "width": target_width,
-        "height": target_height,
-        "frames": new_frame_count
-    }
-
-    # Restore preserved fields at the root if needed (optional, only if you want to keep them)
-    if preserved_type is not None:
-        info_data["type"] = preserved_type
-    if preserved_trigger_word is not None:
-        info_data["trigger_word"] = preserved_trigger_word
-
-    try:
-        with open(info_json_path, 'w', encoding='utf-8') as f:
-            json.dump(info_data, f, indent=2, ensure_ascii=False)
-    except Exception as e_write:
-        pass
-    # --- End update info.json ---
-
-    # Refresh video player in popup by closing and reopening the dialog
-    try:
-        from .video_player_dialog import open_video_captions_dialog
-        if page and '_current_video_path_for_dialog' in globals() and _current_video_path_for_dialog:
-            # Try to preserve the video list if available
-            video_list = _current_video_list_for_dialog if '_current_video_list_for_dialog' in globals() else None
-            on_caption_updated_callback = _active_on_caption_updated_callback if '_active_on_caption_updated_callback' in globals() else None
-            # Close dialog if possible
-            if hasattr(page, 'base_dialog') and page.base_dialog:
-                page.base_dialog.hide_dialog()
-            # Reopen dialog for the same video
-            open_video_captions_dialog(page, _current_video_path_for_dialog, video_list, on_caption_updated_callback)
-    except Exception as e:
-        log_debug(f"Failed to refresh video player by reopening dialog: {e}")
-
-
-# === Keyboard Event Handler ===
-from ui.flet_hotkeys import AUTO_VIDEO_PLAYBACK, VIDEO_PLAY_PAUSE_KEY, VIDEO_NEXT_KEY, VIDEO_PREV_KEY
-
-
-# === Keyboard Event Handler ===
-def handle_caption_dialog_keyboard(page: ft.Page, e: ft.KeyboardEvent):
-    """
-    Handles keyboard events for the video captions dialog, including play/pause toggle and navigation.
-    Uses keybindings from ui.flet_hotkeys.
-    """
-    try:
-        global _caption_field_is_focused
-        if _caption_field_is_focused:
-            return  # Do not trigger any hotkeys while typing in the caption field
-        # Play/pause
-        if hasattr(e, 'key') and e.key == VIDEO_PLAY_PAUSE_KEY:
-            if _active_video_player_instance is not None:
-                video_ctrl = None
-                try:
-                    video_ctrl = _active_video_player_instance.controls[0]
-                except Exception:
-                    pass
-                if video_ctrl and hasattr(video_ctrl, 'play_or_pause'):
-                    video_ctrl.play_or_pause()
-        # Previous video
-        elif hasattr(e, 'key') and e.key == VIDEO_PREV_KEY:
-            switch_video_in_dialog(page, -1)
-        # Next video
-        elif hasattr(e, 'key') and e.key == VIDEO_NEXT_KEY:
-            switch_video_in_dialog(page, 1)
-    except Exception as ex:
-        print(f"[ERROR] Exception in handle_caption_dialog_keyboard: {ex}")
-
-# --- Main Dialog Construction ---
-def create_video_player_with_captions_content(page: ft.Page, video_path: str, video_list: list, on_caption_updated_callback: callable = None) -> tuple[ft.Column, list[ft.Control]]:
-    """
-    Builds the main content column and navigation controls for the video player with captions dialog.
-    """
-    global _active_video_player_instance, _active_caption_field_instance, _active_message_container_instance
-    global _current_video_list_for_dialog, _current_video_path_for_dialog, _active_on_caption_updated_callback
-    global _last_video_loading_path, _active_width_field_instance, _active_height_field_instance
-
-    _current_video_path_for_dialog = video_path
-    _current_video_list_for_dialog = video_list
-    _active_on_caption_updated_callback = on_caption_updated_callback
-    _last_video_loading_path = video_path
-
-    nav_controls = build_navigation_controls(
-        lambda e: switch_video_in_dialog(page, -1),
-        lambda e: switch_video_in_dialog(page, 1)
-    )
-
-    # Video player: always visible, no overlay/thumbnail logic
-    _active_video_player_instance = build_video_player(video_path, autoplay=AUTO_VIDEO_PLAYBACK)
-
-    caption_value, message_control = load_caption_for_video(video_path)
-    _active_caption_field_instance = build_caption_field(initial_value=caption_value)
-
-    # Import crop controls from video_editor.py
-    # from .video_editor import build_crop_controls_row, handle_crop_video_click, handle_crop_all_videos, handle_set_closest_div32
-
-    def on_crop_click(e):
-        page.run_thread(lambda: video_editor.handle_crop_video_click(page, _active_width_field_instance, _active_height_field_instance, _current_video_path_for_dialog))
-
-    def on_crop_all_click(e):
-        page.run_thread(lambda: video_editor.handle_crop_all_videos(page, _active_width_field_instance, _active_height_field_instance, _current_video_list_for_dialog, _active_on_caption_updated_callback))
-
-    def on_get_closest(e):
-        video_editor.handle_set_closest_div32(_active_width_field_instance, _active_height_field_instance, _current_video_path_for_dialog, page)
-
-    crop_controls_row, _active_width_field_instance, _active_height_field_instance = video_editor.build_crop_controls_row(
-        page, _current_video_path_for_dialog, on_crop_click, on_crop_all=on_crop_all_click, on_get_closest=on_get_closest, video_list=_current_video_list_for_dialog, on_caption_updated_callback=_active_on_caption_updated_callback)
-
-    _active_message_container_instance = build_message_container(content=message_control)
-
-    content_column = ft.Column(
-        controls=[
-            ft.Row([_active_video_player_instance], alignment=ft.MainAxisAlignment.CENTER),
-            _active_caption_field_instance,
-            crop_controls_row,
-            ft.Row([
-                _active_message_container_instance
-            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER)
-        ],
-        spacing=10, tight=True,
-        scroll=ft.ScrollMode.ADAPTIVE
-    )
-    return content_column, nav_controls
-
-def open_video_captions_dialog(page: ft.Page, video_path: str, video_list=None, on_caption_updated_callback: callable = None):
-    """
-    Opens the video captions dialog for the given video and list.
-    """
-    global _active_caption_field_instance, _dialog_is_open
-    if not video_path:
-        return
-    if video_list is None:
-        video_list = [video_path]
-
-    video_filename = os.path.basename(video_path)
-    dialog_title_text = f"{video_filename}"
-
-    # Set dialog open flag for frame counter
-    _dialog_is_open = True
-
-    main_content_ui, nav_prefix_controls = create_video_player_with_captions_content(page, video_path, video_list, on_caption_updated_callback)
-
-    desired_width = VIDEO_PLAYER_DIALOG_WIDTH
-
-    if hasattr(page, 'base_dialog') and page.base_dialog:
-        # Set the on_dismiss callback for the base_dialog instance before showing
-        # This assumes base_dialog is a PopupDialogBase instance or similar
-        page.base_dialog._on_dismiss_callback = handle_dialog_dismiss
-        # Pass the handle_dialog_dismiss callback to the PopupDialogBase instance
-        page.base_dialog.show_dialog(content=main_content_ui, title=dialog_title_text, new_width=desired_width, title_prefix_controls=nav_prefix_controls)
-    else:
-        print("Error: Base dialog (PopupDialogBase) not found on page.")
-        fallback_alert = ft.AlertDialog(title=ft.Text(dialog_title_text), content=main_content_ui, actions=[ft.TextButton("Close", on_click=lambda e: fallback_alert.close())], on_dismiss=handle_dialog_dismiss)
-        page.dialog = fallback_alert; fallback_alert.open = True; page.update()
-
-    # Attach dialog-specific hotkey handler using keybindings from flet_hotkeys
-    page.video_dialog_hotkey_handler = lambda e: handle_caption_dialog_keyboard(page, e)
-    page.video_dialog_open = True
+# Removed duplicated update_video_player_source, update_dialog_title, update_caption_and_message
+# as they are defined earlier in the file.
