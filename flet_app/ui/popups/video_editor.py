@@ -234,7 +234,7 @@ def build_crop_controls_row(page, current_video_path, on_crop, on_crop_all=None,
 
     split_to_video_button = create_styled_button(
         text="Split to Video",
-        on_click=lambda e: split_to_video(),
+        on_click=lambda e: split_to_video(page, current_video_path, frame_range_slider, video_list, on_caption_updated_callback),
         col=6,
         button_style=BTN_STYLE2
     )
@@ -684,6 +684,7 @@ def on_time_remap(e, page: ft.Page, current_video_path: str, time_slider, video_
             from ui.popups.video_player_dialog import open_video_captions_dialog
             from ui.tab_dataset_view import update_thumbnails, thumbnails_grid_ref, selected_dataset
             from ui.utils.utils_datasets import regenerate_all_thumbnails_for_dataset
+
             # Try to get the dataset name from the video path
             dataset_name = None
             if current_video_path:
@@ -692,21 +693,26 @@ def on_time_remap(e, page: ft.Page, current_video_path: str, time_slider, video_
                     idx = parts.index("datasets")
                     if idx + 1 < len(parts):
                         dataset_name = parts[idx + 1]
+
             # Regenerate all thumbnails for this dataset
             if dataset_name:
                 try:
                     regenerate_all_thumbnails_for_dataset(dataset_name)
                 except Exception as thumb_exc:
                     print(f"Could not regenerate all thumbnails: {thumb_exc}")
+
             # Refresh the video popup if possible
             open_video_captions_dialog(page, current_video_path, video_list, on_caption_updated_callback)
+
             # Update thumbnails for the dataset if possible
             if dataset_name and thumbnails_grid_ref.current:
                 update_thumbnails(page_ctx=page, grid_control=thumbnails_grid_ref.current, force_refresh=True)
                 thumbnails_grid_ref.current.update()
                 page.update()
+
         except Exception as e:
             print(f"Could not refresh video player or thumbnails: {e}")
+
         page.update()
 
 def handle_crop_video_click(page: ft.Page, width_field, height_field, current_video_path, video_list: list = None, on_caption_updated_callback: callable = None, should_update_ui: bool = True):
@@ -881,36 +887,20 @@ def handle_crop_all_videos(page: ft.Page, width_field, height_field, video_list,
                     if idx + 1 < len(parts):
                         dataset_name = parts[idx + 1]
 
-            if dataset_name:
-                # Regenerate all thumbnails for this dataset
-                try:
-                    regenerate_all_thumbnails_for_dataset(dataset_name)
-                except Exception as thumb_exc:
-                    print(f"Could not regenerate all thumbnails: {thumb_exc}")
-
-                # Update thumbnails for the dataset if possible
-                if thumbnails_grid_ref.current:
+            if dataset_name and selected_dataset and selected_dataset["value"] and selected_dataset["value"] == dataset_name:
+                print(f"Regenerating thumbnails for dataset: {dataset_name}")
+                regenerate_all_thumbnails_for_dataset(dataset_name)
+                if thumbnails_grid_ref and thumbnails_grid_ref.current:
                     update_thumbnails(page_ctx=page, grid_control=thumbnails_grid_ref.current, force_refresh=True)
                     thumbnails_grid_ref.current.update()
-
-            # If the video player dialog is open, it might need a refresh to show the state of the LAST video processed.
-            # This might be complex depending on how the dialog manages state. The open_video_captions_dialog function
-            # as called in the original handle_crop_video_click always re-opens/reloads the dialog with the specific video path.
-            # Calling it here after the loop might only refresh the dialog for the last video.
-            # This part might need further refinement based on desired UX - maybe the dialog should close or show progress?
-            # For now, let's try refreshing the dialog for the last video if video_list is not empty.
-            if video_list:
-                 try:
-                    # This will re-open or refresh the dialog with the last video in the list
-                    open_video_captions_dialog(page, video_list[-1], video_list, on_caption_updated_callback)
-                 except Exception as e:
-                     print(f"Could not refresh video player dialog after batch crop: {e}")
-
-
-            page.update()
+                    page.update()
+            else:
+                print("Could not determine dataset or selected dataset mismatch for thumbnail refresh.")
 
         except Exception as e:
             print(f"Could not complete batch UI update after cropping: {e}")
+
+        page.update()
 
 def cut_to_frames(e, page: ft.Page, current_video_path: str, frame_range_slider: ft.RangeSlider, video_list: list, on_caption_updated_callback: callable):
     """
@@ -1010,6 +1000,7 @@ def cut_to_frames(e, page: ft.Page, current_video_path: str, frame_range_slider:
     video_filename = os.path.basename(input_abs_path)
     if video_filename not in info_data:
         info_data[video_filename] = {}
+
     # Update frame count
     try:
         cap = cv2.VideoCapture(input_abs_path)
@@ -1063,8 +1054,188 @@ def cut_to_frames(e, page: ft.Page, current_video_path: str, frame_range_slider:
 
         page.update()
 
-def split_to_video():
-    print("Split to video")
+def _run_ffmpeg_cut(input_path: str, output_path: str, start_time: float, end_time: float, ffmpeg_exe: str) -> bool:
+    """
+    Helper function to run FFmpeg for cutting a video.
+    Returns True on success, False otherwise.
+    """
+    cmd_list = [
+        ffmpeg_exe, "-y", "-i", input_path,
+        "-ss", str(start_time),
+        "-to", str(end_time),
+        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        output_path
+    ]
+
+    print(f"Running FFmpeg: {' '.join(cmd_list)}")
+
+    try:
+        process = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        stdout, stderr = process.communicate()
+        ffmpeg_result = process.returncode
+        print(f"FFmpeg return code: {ffmpeg_result}")
+        print(f"FFmpeg stderr: {stderr.decode('utf-8', errors='ignore')}")
+
+        if ffmpeg_result != 0 or not os.path.exists(output_path):
+            print("FFmpeg failed or output file not created.")
+            return False
+        return True
+
+    except FileNotFoundError:
+        print("FFmpeg executable not found!")
+        return False
+    except Exception as e:
+        print(f"Exception running FFmpeg: {e}")
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except Exception:
+                pass
+        return False
+
+
+def split_to_video(page: ft.Page, current_video_path: str, frame_range_slider: ft.RangeSlider, video_list: list, on_caption_updated_callback: callable):
+    if not current_video_path or not os.path.exists(current_video_path):
+        return
+
+    start_value = int(frame_range_slider.start_value)
+    end_value = int(frame_range_slider.end_value)
+
+    # Get video properties
+    cap = cv2.VideoCapture(current_video_path)
+    if not cap.isOpened():
+        return
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+
+    if fps <= 0:
+        return
+
+    # If start_value is 0, do nothing as per requirement.
+    if start_value == 0:
+        return
+
+    temp_output_dir = os.path.join(os.path.dirname(__file__), "..", "..", "storage", "temp")
+    os.makedirs(temp_output_dir, exist_ok=True)
+    ffmpeg_exe = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ffmpeg", "bin", "ffmpeg.exe"))
+
+    if not os.path.exists(ffmpeg_exe):
+        return
+
+    input_abs_path = os.path.abspath(current_video_path)
+    base_name, ext = os.path.splitext(os.path.basename(input_abs_path))
+    video_dir = os.path.dirname(input_abs_path)
+
+    # Define final output paths for the two videos
+    final_output_path_1 = os.path.join(video_dir, f"{base_name}{ext}") # Original name for the first part
+    final_output_path_2 = os.path.join(video_dir, f"{base_name}_01{ext}") # Suffix for the second part
+
+    # Define temporary output paths
+    temp_output_path_1 = os.path.join(temp_output_dir, f"{base_name}_temp_part1{ext}")
+    temp_output_path_2 = os.path.join(temp_output_dir, f"{base_name}_temp_part2{ext}")
+
+    # Calculate times for splitting
+    start_time_1 = 0.0
+    end_time_1 = start_value / fps
+
+    start_time_2 = start_value / fps
+    end_time_2 = end_value / fps
+
+    success_1 = _run_ffmpeg_cut(input_abs_path, temp_output_path_1, start_time_1, end_time_1, ffmpeg_exe)
+
+    if not success_1:
+        # Clean up temp files if any were created
+        if os.path.exists(temp_output_path_1):
+            os.remove(temp_output_path_1)
+        if os.path.exists(temp_output_path_2):
+            os.remove(temp_output_path_2)
+        return
+
+    success_2 = _run_ffmpeg_cut(input_abs_path, temp_output_path_2, start_time_2, end_time_2, ffmpeg_exe)
+
+    if not success_2:
+        # Clean up temp files
+        if os.path.exists(temp_output_path_1):
+            os.remove(temp_output_path_1)
+        if os.path.exists(temp_output_path_2):
+            os.remove(temp_output_path_2)
+        return
+
+    # If both temp files are created successfully, move them to their final destinations
+    try:
+        shutil.move(temp_output_path_1, final_output_path_1)
+        shutil.move(temp_output_path_2, final_output_path_2)
+    except Exception as e:
+        # Attempt to clean up if move failed
+        if os.path.exists(temp_output_path_1): os.remove(temp_output_path_1)
+        if os.path.exists(temp_output_path_2): os.remove(temp_output_path_2)
+        return
+
+
+    # Update info.json for both new files
+    _update_video_info_json(final_output_path_1)
+    _update_video_info_json(final_output_path_2)
+
+    # Refresh thumbnails
+    if page:
+        try:
+            from ui.tab_dataset_view import update_thumbnails, thumbnails_grid_ref, selected_dataset
+            from ui.utils.utils_datasets import regenerate_all_thumbnails_for_dataset
+
+            dataset_name = None
+            parts = os.path.normpath(current_video_path).split(os.sep)
+            if "datasets" in parts:
+                try:
+                    dataset_name = parts[parts.index("datasets") + 1]
+                except IndexError:
+                    pass
+
+            if dataset_name and selected_dataset and selected_dataset["value"] and selected_dataset["value"] == dataset_name:
+                regenerate_all_thumbnails_for_dataset(dataset_name)
+                if thumbnails_grid_ref and thumbnails_grid_ref.current:
+                    update_thumbnails(page_ctx=page, grid_control=thumbnails_grid_ref.current, force_refresh=True)
+                    thumbnails_grid_ref.current.update()
+                    page.update()
+            else:
+                pass # Do nothing if dataset cannot be determined or mismatched
+
+        except ImportError as e:
+            pass # Do nothing on import error
+        except Exception as e:
+            pass # Do nothing on other UI update errors
+
+def _update_video_info_json(video_path: str):
+    """
+    Updates the info.json for a given video path with its current frame count.
+    """
+    video_dir = os.path.dirname(video_path)
+    info_json_path = os.path.join(video_dir, 'info.json')
+    info_data = {}
+    if os.path.exists(info_json_path):
+        try:
+            with open(info_json_path, 'r', encoding='utf-8') as f:
+                info_data = json.load(f)
+        except Exception:
+            info_data = {}
+
+    video_filename = os.path.basename(video_path)
+    if video_filename not in info_data:
+        info_data[video_filename] = {}
+
+    try:
+        cap = cv2.VideoCapture(video_path)
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.release()
+        info_data[video_filename]['frames'] = frame_count
+    except Exception:
+        pass
+
+    try:
+        with open(info_json_path, 'w', encoding='utf-8') as f:
+            json.dump(info_data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
 
 def cut_all_videos_to_max():
     print("CUT")
