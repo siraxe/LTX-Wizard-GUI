@@ -42,3 +42,5 @@ class config:
     IMAGE_EXTENSIONS = ["jpg", "jpeg", "png"]
     MEDIA_EXTENSIONS = VIDEO_EXTENSIONS + IMAGE_EXTENSIONS
     
+    # LoRA models directory
+    LORA_MODELS_DIR = os.path.join("workspace", "lora_models")

@@ -8,6 +8,7 @@ import asyncio # Import asyncio for asynchronous operations
 from .._styles import create_textfield, add_section_title,create_dropdown ,create_styled_button
 from settings import config
 from loguru import logger # Import logger for error logging
+from ui.tab_dataset_view import _build_expansion_tile # Import the necessary helper function
 
 # Global variables to store references to Flet controls and console output
 model_source_dropdown = None
@@ -315,13 +316,24 @@ def _build_validation_config_section():
     ]))
     return controls
 
+def _get_lora_options():
+    """Fetches available LoRA models from the config and formats them for the dropdown."""
+    lora_models_path = config.LORA_MODELS_DIR
+    lora_models = {}
+    if os.path.exists(lora_models_path):
+        for item in os.listdir(lora_models_path):
+            item_path = os.path.join(lora_models_path, item)
+            if os.path.isdir(item_path):
+                lora_models[item] = item
+    
+    options = {name: name for name in lora_models.keys()}
+    options["none"] = "None"
+    return options
+
 def _build_sample_videos_section():
     """Builds the Flet controls for the Sample videos section, including the video placeholders grid."""
-    global model_source_dropdown, lora_dropdown, lora_str_textfield
-    controls = []
-    controls.extend(add_section_title("Sample videos"))
-    controls.append(ft.Divider(height=5, color=ft.Colors.TRANSPARENT))
-
+    global model_source_dropdown, lora_dropdown, lora_str_textfield, sampling_console_output, sampling_progress_bar
+    
     # --- Video Placeholders (Grid) ---
     video_placeholders = [
         ft.Container(
@@ -338,18 +350,7 @@ def _build_sample_videos_section():
             margin=ft.margin.all(5),
         ) for i in range(3)
     ]
-    controls.append(
-        ft.GridView(
-            controls=video_placeholders,
-            max_extent=200,
-            child_aspect_ratio=1.5,
-            spacing=5,
-            run_spacing=10,
-            expand=False,
-            height=140
-        )
-    )
-
+    
     # Get initial LoRA options
     initial_lora_options = _get_lora_options()
 
@@ -384,52 +385,7 @@ def _build_sample_videos_section():
         hint_text="Select model or specify path below",col=3, expand=True
     )
 
-    controls.append(
-        ft.ResponsiveRow(controls=[
-            model_source_dropdown,
-            lora_dropdown,
-            lora_str_textfield,
-            update_button
-            ],spacing=3,
-        )
-    )
-
-    controls.append(
-        ft.Row(
-            controls=[
-                create_styled_button("Sample Video", run_sample_video)
-            ],
-            alignment=ft.MainAxisAlignment.END # Align content to the right
-        )
-    )
-
-    return controls
-
-def build_training_sampling_page_content():
-    """
-    Generates and assembles Flet controls for the training and sampling page.
-    Returns a Container with all page content.
-    """
-    global sampling_status_text, sampling_console_output, sampling_progress_bar
-    page_controls = []
-
-    # Add Validation Configuration section
-    page_controls.extend(_build_validation_config_section())
-
-    page_controls.append(ft.Divider(height=5, color=ft.Colors.TRANSPARENT))
-
-    # Add Sample videos section
-    page_controls.extend(_build_sample_videos_section())
-
-    # Add status text
-    sampling_status_text = ft.Text("", color=ft.Colors.BLUE_ACCENT_700, italic=True)
-    page_controls.append(ft.Row([sampling_status_text]))
-
-    # Add console output section
-    page_controls.extend(add_section_title("Console Output"))
-
     sampling_progress_bar = ft.ProgressBar(value=0.0, visible=False) # Initialize progress bar
-    page_controls.append(sampling_progress_bar)
 
     sampling_console_output = ft.TextField(
         label="Script Output",
@@ -443,7 +399,62 @@ def build_training_sampling_page_content():
         bgcolor=ft.Colors.BLUE_GREY_900,
         color=ft.Colors.WHITE70,
     ) # Initialize console output field
-    page_controls.append(sampling_console_output)
+
+    # Wrap all controls in an ExpansionTile
+    return _build_expansion_tile(
+        title="Sample Videos (WIP , not working)",
+        controls=[
+            ft.Divider(height=5, color=ft.Colors.TRANSPARENT),
+            ft.GridView(
+                controls=video_placeholders,
+                max_extent=200,
+                child_aspect_ratio=1.5,
+                spacing=5,
+                run_spacing=10,
+                expand=False,
+                height=140
+            ),
+            ft.ResponsiveRow(controls=[
+                model_source_dropdown,
+                lora_dropdown,
+                lora_str_textfield,
+                update_button
+                ],spacing=3,
+            ),
+            ft.Row(
+                controls=[
+                    create_styled_button("Sample Video", run_sample_video)
+                ],
+                alignment=ft.MainAxisAlignment.END # Align content to the right
+            ),
+            ft.Divider(height=5, color=ft.Colors.TRANSPARENT),
+            ft.Text("Console Output", weight=ft.FontWeight.BOLD),
+            sampling_progress_bar,
+            sampling_console_output
+        ],
+        initially_expanded=False
+    )
+
+
+def build_training_sampling_page_content():
+    """
+    Generates and assembles Flet controls for the training and sampling page.
+    Returns a Container with all page content.
+    """
+    global sampling_status_text
+    page_controls = []
+
+    # Add Validation Configuration section
+    page_controls.extend(_build_validation_config_section())
+
+    page_controls.append(ft.Divider(height=5, color=ft.Colors.TRANSPARENT))
+
+    # Add Sample videos section
+    page_controls.append(_build_sample_videos_section())
+
+    # Add status text
+    sampling_status_text = ft.Text("", color=ft.Colors.BLUE_ACCENT_700, italic=True)
+    page_controls.append(ft.Row([sampling_status_text]))
 
     return ft.Container(
         content=ft.Column(
@@ -457,6 +468,7 @@ def build_training_sampling_page_content():
         expand=True,
         padding=ft.padding.all(5)
     )
+
 
 # --- Event Handlers ---
 
