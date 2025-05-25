@@ -33,9 +33,9 @@ data:
   num_dataloader_workers: 2
 validation:
   prompts:
-  - "CAKEIFY a person using a knife to cut a cake shaped like bottle of mouthwash"
-  - "CAKEIFY a person using a knife to cut a cake shaped like potted plant"
-  - "CAKEIFY a person using a knife to cut a cake shaped like a jar of Nutella"
+  - CAKEIFY a person using a knife to cut a cake shaped like bottle of mouthwash
+  - CAKEIFY a person using a knife to cut a cake shaped like potted plant
+  - CAKEIFY a person using a knife to cut a cake shaped like a jar of Nutella
   negative_prompt: "worst quality, inconsistent motion, blurry, jittery, distorted"
   video_dims: [512, 512, 49]
   seed: 42
