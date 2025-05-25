@@ -231,6 +231,13 @@ def build_crop_controls_row(page, current_video_path, on_crop, on_crop_all=None,
         col=6,
         button_style=BTN_STYLE2
     )
+
+    split_to_video_button = create_styled_button(
+        text="Split to Video",
+        on_click=lambda e: split_to_video(),
+        col=6,
+        button_style=BTN_STYLE2
+    )
     # Reverse button
     reverse_button = create_styled_button(
         text="Reverse",
@@ -242,6 +249,12 @@ def build_crop_controls_row(page, current_video_path, on_crop, on_crop_all=None,
         text="Time Remap",
         on_click=lambda e: on_time_remap(e, page, current_video_path, time_slider, video_list, on_caption_updated_callback),
         col=6,
+        button_style=BTN_STYLE2
+    )
+    cut_all_videos_to_max_button = create_styled_button(
+        text="Cut All Videos to",
+        on_click=lambda e: cut_all_videos_to_max(),
+        col=8,
         button_style=BTN_STYLE2
     )
 
@@ -256,11 +269,26 @@ def build_crop_controls_row(page, current_video_path, on_crop, on_crop_all=None,
     )
 
     frame_controls_column = ft.Column(
-        controls=[frame_slider,ft.ResponsiveRow([flip_horizontal_button, cut_to_frames_button])],
+        controls=[frame_slider,
+                    ft.ResponsiveRow([flip_horizontal_button, cut_to_frames_button]),
+                    split_to_video_button],
         alignment=ft.MainAxisAlignment.CENTER,
         spacing=5,
         col=4,
         scale=0.9
+    )
+
+    num_to_cut_to = create_textfield(
+        label="num",
+        value="",
+        hint_text=None,
+        multiline=False,
+        min_lines=1,
+        max_lines=1,
+        expand=True,
+        col=4,
+        on_change=None,
+        tooltip=None
     )
 
     # Restore original time_controls_column layout with slider, remap text, and buttons
@@ -273,7 +301,9 @@ def build_crop_controls_row(page, current_video_path, on_crop, on_crop_all=None,
                 spacing=5
                 )
             ]),
-            ft.ResponsiveRow([reverse_button, time_remap_button])
+            ft.ResponsiveRow([reverse_button, time_remap_button]),
+            ft.ResponsiveRow([cut_all_videos_to_max_button,num_to_cut_to]),
+            
         ],
         alignment=ft.MainAxisAlignment.CENTER,
         spacing=5,
@@ -1032,3 +1062,9 @@ def cut_to_frames(e, page: ft.Page, current_video_path: str, frame_range_slider:
             print(f"Could not refresh video player or thumbnails: {e}")
 
         page.update()
+
+def split_to_video():
+    print("Split to video")
+
+def cut_all_videos_to_max():
+    print("CUT")
