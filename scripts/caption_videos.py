@@ -48,7 +48,7 @@ if str(project_root) not in sys.path:
 import csv
 import json
 from enum import Enum
-from flet_app.settings import config
+from flet_app.settings import settings
 
 # --- Write PID to file for external process tracking ---
 try:
@@ -222,7 +222,7 @@ def caption_media(
 
 def _get_media_files(
     input_path: Path,
-    extensions: list[str] = config.MEDIA_EXTENSIONS,
+    extensions: list[str] = settings.MEDIA_EXTENSIONS,
     recursive: bool = False,
 ) -> list[Path]:
     """Get all media files from the input path."""
@@ -436,7 +436,7 @@ def main(  # noqa: PLR0913
         help="Instruction to give to the captioning model",
     ),
     extensions: str = typer.Option(
-        ",".join(config.MEDIA_EXTENSIONS),
+        ",".join(settings.MEDIA_EXTENSIONS),
         "--extensions",
         "-e",
         help="Comma-separated list of media file extensions to process",
