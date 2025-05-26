@@ -5,7 +5,7 @@ from ui.tab_dataset_view import dataset_tab_layout
 from ui.tab_tools_view import get_tools_tab_content
 from flet_app_top_menu import create_app_menu_bar
 from ui.utils.utils_top_menu import TopBarUtils
-from ui.popups.popup_dialog_base import PopupDialogBase
+from ui_popups.popup_dialog_base import PopupDialogBase
 
 # =====================
 # Helper/Data Functions

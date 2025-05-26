@@ -54,7 +54,11 @@ from ltxv_trainer.utils import get_gpu_memory_gb, open_image_as_srgb
 # Import for block swapping
 from ltxv_trainer.blockswap_utils import blockswap_transformer_blocks
 
+# Import for plotting
+#import matplotlib.pyplot as plt
+import numpy as np # Import numpy for calculating rolling average
 
+from ltxv_trainer.trainer_plot import save_loss_plot # Import the new plotting function
 
 # Disable irrelevant warnings from transformers
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
@@ -95,6 +99,13 @@ class LtxvTrainer:
         self._dataset = None
         self._global_step = -1
         self._checkpoint_paths = []
+        self._loss_history = [] # Initialize loss history list
+        self._avg_loss_history = [] # Initialize average loss history list
+        self._avg_loss_steps = [] # Initialize average loss steps list
+        self._lowest_avg_loss_history = [] # Initialize lowest 5 average loss history list
+        self._lowest_avg_loss_steps = [] # Initialize lowest 5 average loss steps list
+        self._highest_avg_loss_history = [] # Initialize highest 5 average loss history list
+        self._highest_avg_loss_steps = [] # Initialize highest 5 average loss steps list
 
     def _setup_block_swap(self) -> None:
         """
@@ -313,11 +324,12 @@ class LtxvTrainer:
                         train_progress.update(
                             task,
                             advance=1,
-                            loss=loss.item(),
+                            loss=loss.item(), # Append loss after optimization step
                             lr=current_lr,
                             step_time=step_time,
                             total_time=total_time,
                         )
+                        self._loss_history.append(loss.item()) # Append loss after optimization step
                         if disable_progress_bars and self._global_step % 20 == 0:
                             logger.info(
                                 f"Step {self._global_step}/{cfg.optimization.steps} - "
@@ -809,6 +821,49 @@ class LtxvTrainer:
 
         rel_outputs_path = output_dir.relative_to(self._config.output_dir)
         logger.info(f"🎥 Validation samples for step {self._global_step} saved in {rel_outputs_path}")
+
+        # Calculate and store average loss for plotting
+        # Use half of the validation interval as the window size, minimum 1
+        validation_interval = self._config.validation.interval if self._config.validation.interval is not None else 50 # Default to 50 if None
+        window_size = max(1, validation_interval // 2)
+
+        if self._accelerator.is_main_process and len(self._loss_history) >= window_size:
+            # Calculate the overall average of the last 'window_size' loss values
+            last_losses = self._loss_history[-window_size:]
+            avg_loss = np.mean(last_losses)
+            self._avg_loss_history.append(avg_loss)
+            self._avg_loss_steps.append(self._global_step)
+
+            # Calculate the average of the lowest 5 and highest 5 losses in the last 'window_size' steps
+            if len(last_losses) >= 5:
+                sorted_losses = sorted(last_losses)
+                lowest_5_avg = np.mean(sorted_losses[:5])
+                highest_5_avg = np.mean(sorted_losses[-5:])
+
+                self._lowest_avg_loss_history.append(lowest_5_avg)
+                self._lowest_avg_loss_steps.append(self._global_step)
+
+                self._highest_avg_loss_history.append(highest_5_avg)
+                self._highest_avg_loss_steps.append(self._global_step)
+            else:
+                logger.warning(f"Not enough data points ({len(last_losses)}) in window ({window_size}) to calculate lowest/highest 5 average.")
+
+        # Save loss plot after sampling
+        if self._accelerator.is_main_process:
+            # Call the external plotting function
+            save_loss_plot(
+                output_dir=output_dir,
+                loss_history=self._loss_history,
+                avg_loss_history=self._avg_loss_history,
+                avg_loss_steps=self._avg_loss_steps,
+                lowest_avg_loss_history=self._lowest_avg_loss_history,
+                lowest_avg_loss_steps=self._lowest_avg_loss_steps,
+                highest_avg_loss_history=self._highest_avg_loss_history,
+                highest_avg_loss_steps=self._highest_avg_loss_steps,
+                global_step=self._global_step,
+                base_output_dir=Path(self._config.output_dir) # Pass the base output directory
+            )
+
         return video_paths
 
     @staticmethod

@@ -2,7 +2,7 @@ import flet as ft
 # import yaml # Removed as hardcoded config data is reduced
 from .._styles import create_textfield, create_dropdown, add_section_title # Import helper functions
 from .training_dataset_block import get_training_dataset_page_content
-from settings import config
+from settings import settings
 
 def get_training_config_page_content():
     """Generates Flet controls with hardcoded configuration values, grouped by section."""
@@ -19,8 +19,8 @@ def get_training_config_page_content():
                     ft.ResponsiveRow(controls=[
                         create_dropdown(
                             "Model Source",
-                            config.ltx_def_model,
-                            config.ltx_model_dict,
+                            settings.ltx_def_model,
+                            settings.ltx_model_dict,
                             hint_text="Select model or specify path below",col=8, expand=True
                         ),
                         create_dropdown(

@@ -216,7 +216,7 @@ def build_convert_lora_section(page, file_picker_input, file_picker_output):
     """Build the Convert Lora section controls and event handlers."""
     # --- Controls ---
     lora_input_path_field = create_textfield("Lora Input path", None, hint_text="Path to Lora file", expand=True, col=5)
-    lora_output_path_field = create_textfield("Lora Output Path", None, hint_text="Directory for output", expand=True, col=5)
+    lora_output_path_field = create_textfield("Lora Output Path (optional)", None, hint_text="Directory for output", expand=True, col=5)
     output_name_field = create_textfield("Output name", None, hint_text="Leave empty to use the original name (suffix '_comfy' will be added)", expand=True, col=9)
     convert_button = create_styled_button("Convert", col=3)
     progress_bar_convert = ft.ProgressBar(visible=False, col=12)
@@ -251,9 +251,13 @@ def build_convert_lora_section(page, file_picker_input, file_picker_output):
         if not input_lora:
             page.show_snack_bar(ft.SnackBar(content=ft.Text("Error: Lora Input path is required."), open=True))
             return
+        # Check if output_dir is empty, if so, use the input file's directory
         if not output_dir:
-            page.show_snack_bar(ft.SnackBar(content=ft.Text("Error: Lora Output Path (directory) is required."), open=True))
-            return
+            if not input_lora:
+                 # This case should ideally not happen due to the check above, but good for safety
+                 page.show_snack_bar(ft.SnackBar(content=ft.Text("Error: Both input and output paths are empty."), open=True))
+                 return
+            output_dir = os.path.dirname(input_lora) # Use directory of input file
 
         abs_input_lora = get_abs_path(input_lora)
         abs_output_dir = get_abs_path(output_dir)

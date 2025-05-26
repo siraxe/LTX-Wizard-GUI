@@ -1,44 +1,64 @@
+import json
 import os
-class config:
-    ltx_models = [
-        "LTXV_2B_0.9.0",
-        "LTXV_2B_0.9.1",
-        "LTXV_2B_0.9.5",
-        "LTXV_2B_0.9.6_DEV",
-        "LTXV_2B_0.9.6_DISTILLED",
-        "LTXV_13B_097_DEV",
-        "LTXV_13B_097_DEV_FP8",
-        "LTXV_13B_097_DISTILLED",
-        "LTXV_13B_097_DISTILLED_FP8",
-    ]
-    
-    captions = {
-        "qwen_25_vl": "Qwen2.5-VL-7B",
-        "llava_next_7b": "LLaVA-NeXT-7B"
-    }
-
-    # Default models / dict
-    ltx_model_dict = {model: model for model in ltx_models}
-    captions_def_model = captions["llava_next_7b"]
-    ltx_def_model = ltx_models[7]
 
 
-    # Thumbnail settings
-    THUMB_TARGET_W = 160
-    THUMB_TARGET_H = 90
-    TARGET_ASPECT_RATIO = THUMB_TARGET_W / THUMB_TARGET_H
-    # Collage settings
-    COLLAGE_WIDTH = 270
-    COLLAGE_HEIGHT = 152
-    THUMB_CELL_W = 91
-    THUMB_CELL_H = 51
+class Config:
+    _instance = None
+    _settings = {}
 
-    
-    # Dataset settings
-    DATASETS_DIR = os.path.join("workspace", "datasets")
-    THUMBNAILS_BASE_DIR = os.path.join("workspace", "thumbnails")
-    DEFAULT_BUCKET_SIZE_STR = "[512, 512, 49]"
-    VIDEO_EXTENSIONS = ["mp4", "avi", "mov", "mkv", "webm"]
-    IMAGE_EXTENSIONS = ["jpg", "jpeg", "png"]
-    MEDIA_EXTENSIONS = VIDEO_EXTENSIONS + IMAGE_EXTENSIONS
-    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(Config, cls).__new__(cls)
+            cls._instance._load_settings()
+        return cls._instance
+
+    def _load_settings(self):
+        # Construct the path to settings.json relative to the current file
+        settings_file_path = os.path.join(os.path.dirname(__file__), 'settings.json')
+        try:
+            with open(settings_file_path, 'r') as f:
+                self._settings = json.load(f)
+            self._post_process_settings()
+        except FileNotFoundError:
+            print(f"Error: settings.json not found at {settings_file_path}")
+            # Depending on your application's needs, you might want to:
+            # 1. Load default settings from a hardcoded dictionary
+            # 2. Raise an exception to stop the application
+            # 3. Log the error and continue with an empty config (might lead to further errors)
+            # For now, we'll just print an error.
+        except json.JSONDecodeError:
+            print(f"Error: Could not decode JSON from {settings_file_path}. Check for syntax errors.")
+            # Handle malformed JSON
+
+    def _post_process_settings(self):
+        # Reconstruct derived values
+        self._settings['ltx_model_dict'] = {model: model for model in self._settings['ltx_models']}
+        
+        # Calculate TARGET_ASPECT_RATIO dynamically
+        if 'THUMB_TARGET_W' in self._settings and 'THUMB_TARGET_H' in self._settings:
+            self._settings['TARGET_ASPECT_RATIO'] = self._settings['THUMB_TARGET_W'] / self._settings['THUMB_TARGET_H']
+        else:
+            self._settings['TARGET_ASPECT_RATIO'] = None # Or a default value
+
+        # Combine media extensions
+        self._settings['MEDIA_EXTENSIONS'] = self._settings['VIDEO_EXTENSIONS'] + self._settings['IMAGE_EXTENSIONS']
+
+        # Ensure paths are OS-agnostic by splitting and rejoining
+        # This assumes paths in JSON use forward slashes as separators
+        for key in ['DATASETS_DIR', 'THUMBNAILS_BASE_DIR', 'LORA_MODELS_DIR', 'FFMPEG_PATH']:
+            if key in self._settings and isinstance(self._settings[key], str):
+                self._settings[key] = os.path.join(*self._settings[key].split('/'))
+
+    def __getattr__(self, name):
+        if name in self._settings:
+            return self._settings[name]
+        # If the attribute is not found in _settings, raise an AttributeError
+        # This is standard Python behavior for missing attributes
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+
+# Instantiate the Config class to make it accessible globally
+# Other modules can now import and use 'settings' directly:
+# from .settings import settings
+# print(settings.THUMB_TARGET_W)
+settings = Config()
