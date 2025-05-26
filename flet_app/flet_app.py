@@ -1,5 +1,5 @@
 import flet as ft
-from ui.flet_hotkeys import handle_global_keyboard_event
+from ui.flet_hotkeys import global_hotkey_handler
 from ui.tab_training_view import get_training_tab_content
 from ui.tab_dataset_view import dataset_tab_layout
 from ui.tab_tools_view import get_tools_tab_content
@@ -105,6 +105,7 @@ def main(page: ft.Page):
     page.video_dialog_open = False
 
     # Keyboard event handler
-    page.on_keyboard_event = lambda e: handle_global_keyboard_event(page, e)
+    page.on_keyboard_event = lambda e: global_hotkey_handler(page, e)
+    page.update()
 
 ft.app(target=main)

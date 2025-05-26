@@ -123,43 +123,11 @@ def build_menu_bar(page: ft.Page, on_menu_item_click, text_size=10):
         ]
     )
 
-def register_menu_bar_keyboard_handler(page: ft.Page):
-    """Register the menu bar keyboard handler to the page if not already registered."""
-    if hasattr(page, '_menu_bar_hotkey_registered'):
-        return
-    prev_handler = getattr(page, 'on_keyboard_event', None)
-    def combined_keyboard_handler(e):
-        menu_bar_keyboard_handler(page, e)
-        if prev_handler and prev_handler != combined_keyboard_handler:
-            prev_handler(e)
-    page.on_keyboard_event = combined_keyboard_handler
-    page._menu_bar_hotkey_registered = True
-
-def menu_bar_keyboard_handler(page: ft.Page, e):
-    """Handle keyboard shortcuts for the menu bar."""
-    # If the video dialog is open and has a handler, delegate to it
-    if getattr(page, 'video_dialog_open', False) and getattr(page, 'video_dialog_hotkey_handler', None):
-        page.video_dialog_hotkey_handler(e)
-        return
-    # Otherwise, handle menu hotkeys
-    if hasattr(e, 'ctrl') and e.ctrl:
-        # Ctrl+Shift+S (Save As)
-        if hasattr(e, 'shift') and e.shift and hasattr(e, 'key') and e.key.lower() == 's':
-            handle_save_as(page)
-        # Ctrl+S (Save)
-        elif hasattr(e, 'key') and e.key.lower() == 's':
-            handle_save(page)
-        # Ctrl+O (Open)
-        elif hasattr(e, 'key') and e.key.lower() == 'o':
-            handle_open(page)
-
 # =====================
 # Main Entry Point
 # =====================
 
 def create_app_menu_bar(page: ft.Page):
     """Create and return the application menu bar for the given page."""
-    # Register keyboard handler for menu bar shortcuts
-    register_menu_bar_keyboard_handler(page)
     # Build and return the menu bar
     return build_menu_bar(page, lambda e: handle_menu_item_click(page, e), text_size=10)

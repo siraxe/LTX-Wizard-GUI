@@ -12,7 +12,7 @@ VIDEO_PLAY_PAUSE_KEY = " "  # Spacebar
 VIDEO_NEXT_KEY = "]"
 VIDEO_PREV_KEY = "["
 
-def handle_global_keyboard_event(page, e):
+def global_hotkey_handler(page, e):
     """
     Handles global keyboard shortcuts and dialog hotkeys.
     - Esc: Close dialog
@@ -22,11 +22,13 @@ def handle_global_keyboard_event(page, e):
     if getattr(page, 'video_dialog_open', False) and getattr(page, 'video_dialog_hotkey_handler', None):
         page.video_dialog_hotkey_handler(e)
         return
+
     # Esc key closes base dialog if open
     if hasattr(e, 'key') and e.key == 'Escape':
         if hasattr(page, 'base_dialog') and getattr(page.base_dialog, 'visible', False):
             page.base_dialog.hide_dialog()
             return
+
     # Global hotkeys for menu actions
     if hasattr(e, 'ctrl') and e.ctrl:
         # Ctrl+Shift+S (Save As)

@@ -103,6 +103,9 @@ def load_dataset_config(dataset_name: str | None) -> tuple[str, str, str]:
 
 def save_dataset_config(dataset_name: str, bucket_str: str, model_name: str, trigger_word: str) -> bool:
     dataset_info_json_path = os.path.join(settings.DATASETS_DIR, dataset_name, "info.json")
+    
+    bucket_str_val = bucket_str # Initialize with the input value
+
     parsed_bucket_list = parse_bucket_string_to_list(bucket_str)
     if parsed_bucket_list is None:
          if e.page:
@@ -114,25 +117,20 @@ def save_dataset_config(dataset_name: str, bucket_str: str, model_name: str, tri
             # Continue with default or previous valid value for saving config
             bucket_str_val = settings.DEFAULT_BUCKET_SIZE_STR # Or load previous valid? Using default for simplicity.
 
-    success = save_dataset_config(
-        dataset_name,
-        bucket_str_val, # Use validated/default value
-        model_name_dropdown.value,
-        trigger_word_textfield.value
-    )
-    if e.page:
-        if success:
-            e.page.snack_bar = ft.SnackBar(
-                content=ft.Text(f"Config saved for {dataset_name}."),
-                open=True
-            )
-        else:
-            e.page.snack_bar = ft.SnackBar(
-                content=ft.Text(f"Error saving config for {dataset_name}"),
-                open=True
-            )
-        e.page.update()
-    return success
+    dataset_config = {
+        "bucket_resolution": bucket_str_val,
+        "model_name": model_name,
+        "trigger_word": trigger_word
+    }
+
+    try:
+        os.makedirs(os.path.dirname(dataset_info_json_path), exist_ok=True)
+        with open(dataset_info_json_path, "w") as f:
+            json.dump(dataset_config, f, indent=4)
+        return True
+    except Exception as e:
+        print(f"Error saving dataset config: {e}")
+        return False
 
 def load_processed_map(dataset_name: str) -> dict | None:
     processed_json_path = os.path.join(settings.DATASETS_DIR, dataset_name, "preprocessed_data", "processed.json")
@@ -522,26 +520,20 @@ def on_rename_files_click(e: ft.ControlEvent):
 def on_bucket_or_model_change(e: ft.ControlEvent):
     current_dataset_name = selected_dataset.get("value")
     if not current_dataset_name:
-        if e.page:
-            e.page.snack_bar = ft.SnackBar(
-                content=ft.Text("No dataset selected. Configuration not saved."),
-                open=True
-            )
-            e.page.update()
         return
 
-    # Validate bucket size format before saving
-    bucket_str_val = bucket_size_textfield.value.strip()
+    bucket_str_val = bucket_size_textfield.value # Initialize bucket_str_val
+
+    # Validate bucket format and update bucket_str_val if invalid
     parsed_bucket_list = parse_bucket_string_to_list(bucket_str_val)
     if parsed_bucket_list is None:
-         if e.page:
+        if e.page:
             e.page.snack_bar = ft.SnackBar(
                 content=ft.Text(f"Invalid Bucket Size format: '{bucket_str_val}'. Using default."),
                 open=True
             )
             e.page.update()
-            # Continue with default or previous valid value for saving config
-            bucket_str_val = settings.DEFAULT_BUCKET_SIZE_STR # Or load previous valid? Using default for simplicity.
+        bucket_str_val = settings.DEFAULT_BUCKET_SIZE_STR # Use default if invalid
 
     success = save_dataset_config(
         current_dataset_name,
