@@ -94,6 +94,7 @@ _last_video_loading_path = ""
 _active_width_field_instance = None
 _active_height_field_instance = None
 _video_is_playing = [False]  # Global play/pause state, always a list for mutability
+_active_page_ref: ft.Page = None # New global to hold page reference
 
 # Global state for video playback range and reframing
 reframed_playback = False
@@ -395,6 +396,7 @@ def switch_video_in_dialog(page: ft.Page, new_video_offset: int):
     global _current_video_list_for_dialog, _current_video_path_for_dialog, _active_on_caption_updated_callback
     global _last_video_loading_path
     global _frame_range_slider_instance, _start_value_text_instance, _end_value_text_instance, _total_frames_text_instance
+    global _active_page_ref # Add to global declaration
 
     if not _current_video_list_for_dialog or not _current_video_path_for_dialog:
         return
@@ -431,7 +433,7 @@ def switch_video_in_dialog(page: ft.Page, new_video_offset: int):
                 page.video_dialog_hotkey_handler = lambda event: handle_caption_dialog_keyboard(page, event)
                 page.dialog.update()
             elif page:
-                fallback_alert = ft.AlertDialog(title=ft.Text(os.path.basename(_current_video_path_for_dialog)), content=main_content_ui, actions=[ft.TextButton("Close", on_click=lambda e: fallback_alert.close())], on_dismiss=handle_dialog_dismiss)
+                fallback_alert = ft.AlertDialog(title=ft.Text(os.path.basename(_current_video_path_for_dialog)), content=main_content_ui, actions=[ft.TextButton("Close", on_click=lambda e: fallback_alert.close())], on_dismiss=lambda e: handle_dialog_dismiss(e))
                 page.dialog = fallback_alert; fallback_alert.open = True; page.video_dialog_open = True; page.video_dialog_hotkey_handler = lambda event: handle_caption_dialog_keyboard(page, event); page.update()
         except Exception as e:
             print(f"Error rebuilding dialog content for video switch: {e}")
@@ -492,6 +494,7 @@ def handle_dialog_dismiss(e):
     Handles the dialog dismissal event: saves the current caption if the caption field exists and stops the frame counter thread.
     """
     global _active_caption_field_instance, _current_video_path_for_dialog, _active_on_caption_updated_callback, _dialog_is_open, _frame_update_timer
+    global _active_page_ref # Add to global declaration
     _dialog_is_open = False  # Stop frame counter thread
     if _frame_update_timer is not None and hasattr(_frame_update_timer, 'is_alive') and _frame_update_timer.is_alive():
         _frame_update_timer.cancel()
@@ -499,6 +502,11 @@ def handle_dialog_dismiss(e):
         current_caption = _active_caption_field_instance.value.strip()
         # Pass page=None here as page may not be valid after dialog is dismissed
         save_caption_for_video(page=None, video_path=_current_video_path_for_dialog, new_caption=current_caption, on_caption_updated_callback=_active_on_caption_updated_callback)
+    
+    if _active_page_ref:
+        _active_page_ref.video_dialog_open = False
+        _active_page_ref.video_dialog_hotkey_handler = None
+        _active_page_ref.update()
 
 # === Keyboard Event Handler ===
 from ui.flet_hotkeys import AUTO_VIDEO_PLAYBACK, VIDEO_PLAY_PAUSE_KEY, VIDEO_NEXT_KEY, VIDEO_PREV_KEY
@@ -530,8 +538,13 @@ def handle_caption_dialog_keyboard(page: ft.Page, e: ft.KeyboardEvent):
         # Next video
         elif hasattr(e, 'key') and e.key == VIDEO_NEXT_KEY:
             switch_video_in_dialog(page, 1)
+        else:
+            # If the key is not handled by the video dialog, pass it to the global hotkey handler
+            from ui.flet_hotkeys import global_hotkey_handler
+            global_hotkey_handler(page, e)
     except Exception as ex:
         print(f"[ERROR] Exception in handle_caption_dialog_keyboard: {ex}")
+        return False
 
 # --- Main Dialog Construction ---
 def create_video_player_with_captions_content(page: ft.Page, video_path: str, video_list: list, on_caption_updated_callback: callable = None) -> tuple[ft.Column, list[ft.Control]]:
@@ -543,11 +556,13 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
     global _last_video_loading_path
     global _active_width_field_instance, _active_height_field_instance
     global _frame_range_slider_instance, _start_value_text_instance, _end_value_text_instance, _total_frames_text_instance
+    global _active_page_ref # Add to global declaration
 
     _current_video_path_for_dialog = video_path
     _current_video_list_for_dialog = video_list
     _active_on_caption_updated_callback = on_caption_updated_callback
     _last_video_loading_path = video_path
+    _active_page_ref = page # Set the global page reference
 
     nav_controls = build_navigation_controls(
         lambda e: switch_video_in_dialog(page, -1),
@@ -647,7 +662,7 @@ def open_video_captions_dialog(page: ft.Page, video_path: str, video_list=None, 
         update_dialog_title(page, video_path) # Ensure title is correct
     else:
         print("Error: Base dialog (PopupDialogBase) not found on page.")
-        fallback_alert = ft.AlertDialog(title=ft.Text(dialog_title_text), content=main_content_ui, actions=[ft.TextButton("Close", on_click=lambda e: fallback_alert.close())], on_dismiss=handle_dialog_dismiss)
+        fallback_alert = ft.AlertDialog(title=ft.Text(dialog_title_text), content=main_content_ui, actions=[ft.TextButton("Close", on_click=lambda e: fallback_alert.close())], on_dismiss=lambda e: handle_dialog_dismiss(e))
         page.dialog = fallback_alert; fallback_alert.open = True; page.video_dialog_open = True; page.video_dialog_hotkey_handler = lambda event: handle_caption_dialog_keyboard(page, event); page.update()
 
 
