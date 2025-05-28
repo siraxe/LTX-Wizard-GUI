@@ -1,5 +1,6 @@
 import flet as ft
 import os
+from rich.color import Color
 import yaml # Import yaml for potential future use or reference, though not strictly needed for the CLI approach
 import shlex # For splitting command strings safely
 import json # To parse video_dims list
@@ -28,10 +29,55 @@ sampling_status_text = None # For displaying the sampling status
 sampling_console_output = None
 sampling_progress_bar = None
 
+# List to store paths of images dropped from OS
+dropped_image_paths = []
+
 # Add a flag to track pending save
 pending_save = {'should_save': False, 'yaml_dict': None, 'out_path': None}
 
-# --- Utility Functions for Data and File Handling ---
+# New global variables for file picker and image display
+file_picker = None
+active_image_target_control = None # To keep track of which image display to update
+
+image_display_c1 = ft.Image(
+    src="/images/image_placeholder.png",  # Placeholder image
+    width=200,
+    height=200,
+    fit=ft.ImageFit.CONTAIN
+)
+image_display_c2 = ft.Image(
+    src="/images/image_placeholder.png",  # Placeholder image
+    width=200,
+    height=200,
+    fit=ft.ImageFit.CONTAIN
+)
+
+selected_image_path_c1 = None # New global variable to store the selected image path for c1
+selected_image_path_c2 = None # New global variable to store the selected image path for c2
+
+# Global on_pick_files_result removed as it's superseded by the inner on_dialog_result
+# defined within build_training_sampling_page_content and assigned to the global file_picker instance.
+
+def _create_image_selector_container(image_control: ft.Image, image_path_var: str, col_span: int):
+    def _on_click(e):
+        global active_image_target_control
+        active_image_target_control = image_control
+        file_picker.pick_files(allow_multiple=False, allowed_extensions=["png", "jpg", "jpeg", "gif"])
+
+    return ft.Container(
+        content=ft.Column(
+            [image_control, ft.Text("Click to select image")],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+        ),
+        width=200,
+        height=250,
+        border=ft.border.all(1, ft.Colors.BLUE_GREY_400),
+        border_radius=ft.border_radius.all(5),
+        alignment=ft.alignment.center,
+        on_click=_on_click,
+        col=col_span
+    )
 
 def _get_lora_options() -> dict[str, str]:
     """
@@ -70,6 +116,8 @@ def _collect_sampling_parameters() -> dict:
         "inference_steps_text": inference_steps_textfield.value if inference_steps_textfield else "25",
         "guidance_scale_text": guidance_scale_textfield.value if guidance_scale_textfield else "3.5",
         "videos_per_prompt_text": videos_per_prompt_textfield.value if videos_per_prompt_textfield else "1",
+        "selected_image_path_c1": selected_image_path_c1, # Include the selected image path for c1
+        "selected_image_path_c2": selected_image_path_c2 # Include the selected image path for c2
     }
 
 
@@ -172,11 +220,19 @@ def _update_and_save_config(config_path: str, parameters: dict, checkpoint_path:
         yaml_config['validation']['inference_steps'] = parameters["inference_steps"]
         yaml_config['validation']['guidance_scale'] = parameters["guidance_scale"]
         yaml_config['validation']['videos_per_prompt'] = parameters["videos_per_prompt"]
+        
+        # Add selected image path to validation if available
+        if parameters.get("selected_image_path"):
+            yaml_config['validation']['images'] = [parameters["selected_image_path"]]
+        else:
+            # Ensure 'images' key is not present or is None if no image is selected
+            yaml_config['validation']['images'] = None
 
-        # Update the checkpoint path
-        if 'model' not in yaml_config:
-            yaml_config['model'] = {}
-        yaml_config['model']['load_checkpoint'] = checkpoint_path
+        # Handle checkpoint path for model loading
+        if checkpoint_path:
+            if 'model' not in yaml_config:
+                yaml_config['model'] = {}
+            yaml_config['model']['load_checkpoint'] = checkpoint_path
 
         # Update output directory (if needed, sample_video.py now reads this)
         yaml_config['output_dir'] = "workspace/output/manual_samples" # Use a fixed output dir for manual samples
@@ -283,7 +339,7 @@ async def _run_sampling_command_async(page: ft.Page) -> None:
 
 # --- UI Building Functions ---
 
-def _build_validation_config_section():
+def _build_validation_config_section(page: ft.Page):
     """Builds the Flet controls for the Validation Configuration section."""
     global prompts_textfield, negative_prompt_textfield, video_dims_textfield, seed_textfield, inference_steps_textfield, interval_textfield, videos_per_prompt_textfield, guidance_scale_textfield
     controls = []
@@ -291,7 +347,7 @@ def _build_validation_config_section():
     
     # Assign controls to global variables and set default value for prompts as a single string
     prompts_textfield = create_textfield("Prompts",
-                                            "CAKEIFY a person using a knife to cut a cake shaped like bottle of mouthwash",
+                                            "CAKEIFY a person using a knife to cut a cake shaped like bottle of mouthwash \nCAKEIFY a person using a knife to cut a cake shaped like owl head",
                                             hint_text="Enter each prompt on a new line",
                                             multiline=True,
                                             min_lines=3, max_lines=3,
@@ -308,16 +364,63 @@ def _build_validation_config_section():
         prompts_textfield,
         negative_prompt_textfield
     ], vertical_alignment=ft.CrossAxisAlignment.START))
-    controls.append(ft.Row(controls=[
+
+    r1= ft.Row(controls=[
         video_dims_textfield,
         seed_textfield,
         inference_steps_textfield
-    ]))
-    controls.append(ft.Row(controls=[
+    ],col=4, expand=True)
+
+    r2 = ft.Row(controls=[
         interval_textfield,
         videos_per_prompt_textfield,
         guidance_scale_textfield
+    ],col=4, expand=True)
+
+    r_sum = ft.Column(controls=[
+        r1,
+        r2
+    ],col=6, expand=True)
+
+    # Define the drag and drop area container
+    image_drop_area_content = ft.Container(
+        content=ft.Text("Drag and drop images here"),
+        alignment=ft.alignment.center,
+        width=400,
+        height=200,
+        border=ft.border.all(1, ft.Colors.BLUE_GREY_400),
+        border_radius=5,
+    )
+
+    # New visual drop target using ft.Container
+    image_drop_area = ft.Container(
+        content=image_drop_area_content,
+        width=400,
+        height=200,
+        border=ft.border.all(1, ft.Colors.BLUE_GREY_400), # Initial border
+        border_radius=5,
+        alignment=ft.alignment.center,
+        on_click=lambda e: file_picker.pick_files(
+            allow_multiple=False, allowed_extensions=["png", "jpg", "jpeg", "gif"]
+        ),
+    )
+    c1 = _create_image_selector_container(image_display_c1, "selected_image_path_c1", 6)
+    c2 = _create_image_selector_container(image_display_c2, "selected_image_path_c2", 6)
+
+    controls.append(ft.Divider(thickness=1))
+    controls.append(ft.ResponsiveRow(controls=[
+        ft.Column(controls=[
+                ft.ResponsiveRow(
+                    controls=[c1,c2]
+                ),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            expand=True,col=6,
+        ),
+        r_sum
     ]))
+
     return controls
 
 def _get_lora_options():
@@ -440,16 +543,70 @@ def _build_sample_videos_section():
     )
 
 
-def build_training_sampling_page_content():
+def build_training_sampling_page_content(page: ft.Page):
     """
     Generates and assembles Flet controls for the training and sampling page.
     Returns a Container with all page content.
     """
-    global sampling_status_text
+    global file_picker, sampling_status_text
+
+    # Initialize selected image paths and display controls on the page object
+    page.selected_image_path_c1 = None
+    page.selected_image_path_c2 = None
+    page.image_display_c1 = image_display_c1
+    page.image_display_c2 = image_display_c2
+    logger.info("[training_sampling.py] Initialized page image paths and display controls")
     page_controls = []
 
+    def on_dialog_result(e: ft.FilePickerResultEvent):
+        # This 'page' is from the outer scope of build_training_sampling_page_content
+        global active_image_target_control, selected_image_path_c1, selected_image_path_c2 
+        
+        if e.files and active_image_target_control:
+            selected_file_path = e.files[0].path
+            
+            # 'page' is lexically scoped from build_training_sampling_page_content
+
+            if active_image_target_control == image_display_c1:
+                selected_image_path_c1 = selected_file_path # Update global if still used elsewhere directly
+                page.selected_image_path_c1 = selected_file_path # Set on page object
+                logger.info(f"[training_sampling.py on_dialog_result] page.selected_image_path_c1 set to: {page.selected_image_path_c1}")
+                # Update both the global and page's image display control
+                image_display_c1.src = selected_file_path
+                page.image_display_c1.src = selected_file_path
+                image_display_c1.update()
+            elif active_image_target_control == image_display_c2:
+                selected_image_path_c2 = selected_file_path # Update global if still used elsewhere directly
+                page.selected_image_path_c2 = selected_file_path # Set on page object
+                logger.info(f"[training_sampling.py on_dialog_result] page.selected_image_path_c2 set to: {page.selected_image_path_c2}")
+                # Update both the global and page's image display control
+                image_display_c2.src = selected_file_path
+                page.image_display_c2.src = selected_file_path
+                image_display_c2.update()
+            
+            page.update() # Update the page to reflect image changes
+        
+        # Reset active_image_target_control after the dialog interaction is complete,
+        # regardless of whether files were selected. This ensures the next image selection
+        # process starts with a clean state for active_image_target_control.
+        active_image_target_control = None
+    global file_picker # Ensure we are using the global file_picker instance
+    if file_picker is None:
+        file_picker = ft.FilePicker(on_result=on_dialog_result) # Assign the inner on_dialog_result
+        page.overlay.append(file_picker)
+    else: # If already initialized, ensure its on_result is this function instance
+        file_picker.on_result = on_dialog_result # CRITICAL: Ensure this specific on_dialog_result is used
+        if file_picker not in page.overlay:
+             page.overlay.append(file_picker)
+
+    # Also, ensure the global on_pick_files_result (if it exists and is different) is not interfering.
+    # For clarity, it would be best to have only one on_result handler for the file_picker.
+    # The one defined within this function now correctly uses the 'page' object from its scope.
+    # The global file_picker instance, with its on_result correctly set to the inner on_dialog_result,
+    # is already added to page.overlay, so no need to re-initialize or add to page_controls here.
+
     # Add Validation Configuration section
-    page_controls.extend(_build_validation_config_section())
+    page_controls.extend(_build_validation_config_section(page))
 
     page_controls.append(ft.Divider(height=5, color=ft.Colors.TRANSPARENT))
 
