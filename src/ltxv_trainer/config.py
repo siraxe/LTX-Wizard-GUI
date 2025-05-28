@@ -134,6 +134,13 @@ class OptimizationConfig(ConfigBaseModel):
         le=1.0,
     )
 
+    negative_prompt_dropout_p: float = Field(
+        default=0.05,
+        description="Probability of dropping the negative prompt and using unconditional embeddings instead (0.0 = always use negative prompt, 1.0 = never use negative prompt/always unconditional). Also known as CFG dropout probability.",
+        ge=0.0,
+        le=1.0,
+    )
+
 
 class AccelerationConfig(ConfigBaseModel):
     """Configuration for hardware acceleration and compute optimization"""

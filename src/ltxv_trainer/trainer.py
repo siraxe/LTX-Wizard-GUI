@@ -403,8 +403,16 @@ class LtxvTrainer:
 
         # Get pre-encoded text conditions
         text_conditions = batch["text_conditions"]
-        prompt_embeds = text_conditions["prompt_embeds"]
-        prompt_attention_mask = text_conditions["prompt_attention_mask"]
+
+        # Conditionally use negative prompt embeddings for Classifier-Free Guidance
+        if (self._config.optimization.negative_prompt_dropout_p > 0.0) and (
+            random.random() < self._config.optimization.negative_prompt_dropout_p
+        ):
+            prompt_embeds = text_conditions["negative_prompt_embeds"]
+            prompt_attention_mask = text_conditions["negative_prompt_attention_mask"]
+        else:
+            prompt_embeds = text_conditions["prompt_embeds"]
+            prompt_attention_mask = text_conditions["prompt_attention_mask"]
 
         sigmas = self._timestep_sampler.sample_for(packed_latents)
         timesteps = torch.round(sigmas * 1000.0).long()
