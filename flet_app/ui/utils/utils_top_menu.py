@@ -25,7 +25,7 @@ class TopBarUtils:
         return result
 
     @staticmethod
-    def build_yaml_config_from_ui(training_tab_container):
+    def build_yaml_config_from_ui(training_tab_container, selected_image_path: str = None):
         config_controls = training_tab_container.config_page_content
         sampling_controls = training_tab_container.sampling_page_content
         dataset_controls = getattr(training_tab_container, 'dataset_page_content', None)
@@ -112,14 +112,11 @@ class TopBarUtils:
                 'interval': interval_for_yaml,
                 'videos_per_prompt': int(sampling.get('Videos Per Prompt', 1)),
                 'guidance_scale': float(sampling.get('Guidance Scale', 3.5)),
+                'images': [selected_image_path] if selected_image_path else None,
             },
             'checkpoints': {
                 'interval': int(config.get('Interval (Checkpoints)', 250)),
                 'keep_last_n': int(config.get('Keep Last N', -1)),
-            },
-            'flow_matching': {
-                'timestep_sampling_mode': config.get('Timestep Sampling Mode'),
-                'timestep_sampling_params': {},
             },
             'seed': int(config.get('Seed (General)', 42)),
             'output_dir': config.get('Output Directory'),
@@ -133,6 +130,15 @@ class TopBarUtils:
         # This assumes each line in the textfield is a separate prompt.
         prompt_list = [p.strip() for p in prompts_input.splitlines() if p.strip()]
         yaml_dict['validation']['prompts'] = prompt_list
+
+        # Get selected image path from dataset page
+        current_selected_image_path = None
+        if dataset_controls and hasattr(dataset_controls, 'get_selected_image_path'):
+            current_selected_image_path = dataset_controls.get_selected_image_path()
+
+        # Add image path to validation if available
+        if current_selected_image_path:
+            yaml_dict['validation']['images'] = [current_selected_image_path]
 
         return yaml_dict
 

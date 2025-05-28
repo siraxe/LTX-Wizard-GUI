@@ -29,10 +29,37 @@ sampling_status_text = None # For displaying the sampling status
 sampling_console_output = None
 sampling_progress_bar = None
 
+# List to store paths of images dropped from OS
+dropped_image_paths = []
+
 # Add a flag to track pending save
 pending_save = {'should_save': False, 'yaml_dict': None, 'out_path': None}
 
+# New global variables for file picker and image display
+file_picker = None
+selected_image_display = ft.Image(
+    src="/images/image_placeholder.png",  # Placeholder image
+    width=200,
+    height=200,
+    fit=ft.ImageFit.CONTAIN
+)
+selected_image_path = None # New global variable to store the selected image path
+
 # --- Utility Functions for Data and File Handling ---
+
+# def handle_dropped_images(file_paths: list[str]):
+#     global dropped_image_paths
+#     dropped_image_paths.clear()
+#     dropped_image_paths.extend(file_paths)
+    
+#     # Update the UI of the drag-and-drop area
+#     if image_drop_area_content:
+#         image_drop_area_content.controls.clear()
+#         image_drop_area_content.controls.append(ft.Text("Loaded Images:"))
+#         for path in dropped_image_paths:
+#             image_drop_area_content.controls.append(ft.Text(os.path.basename(path)))
+#         image_drop_area.border = ft.border.all(1, ft.Colors.BLUE_GREY_400) # Reset border
+#         image_drop_area.update()
 
 def _get_lora_options() -> dict[str, str]:
     """
@@ -71,6 +98,7 @@ def _collect_sampling_parameters() -> dict:
         "inference_steps_text": inference_steps_textfield.value if inference_steps_textfield else "25",
         "guidance_scale_text": guidance_scale_textfield.value if guidance_scale_textfield else "3.5",
         "videos_per_prompt_text": videos_per_prompt_textfield.value if videos_per_prompt_textfield else "1",
+        "selected_image_path": selected_image_path # Include the selected image path
     }
 
 
@@ -173,11 +201,19 @@ def _update_and_save_config(config_path: str, parameters: dict, checkpoint_path:
         yaml_config['validation']['inference_steps'] = parameters["inference_steps"]
         yaml_config['validation']['guidance_scale'] = parameters["guidance_scale"]
         yaml_config['validation']['videos_per_prompt'] = parameters["videos_per_prompt"]
+        
+        # Add selected image path to validation if available
+        if parameters.get("selected_image_path"):
+            yaml_config['validation']['images'] = [parameters["selected_image_path"]]
+        else:
+            # Ensure 'images' key is not present or is None if no image is selected
+            yaml_config['validation']['images'] = None
 
-        # Update the checkpoint path
-        if 'model' not in yaml_config:
-            yaml_config['model'] = {}
-        yaml_config['model']['load_checkpoint'] = checkpoint_path
+        # Handle checkpoint path for model loading
+        if checkpoint_path:
+            if 'model' not in yaml_config:
+                yaml_config['model'] = {}
+            yaml_config['model']['load_checkpoint'] = checkpoint_path
 
         # Update output directory (if needed, sample_video.py now reads this)
         yaml_config['output_dir'] = "workspace/output/manual_samples" # Use a fixed output dir for manual samples
@@ -328,17 +364,56 @@ def _build_validation_config_section():
         r2
     ],col=6, expand=True)
 
+    # Define the drag and drop area container
+    image_drop_area_content = ft.Container(
+        content=ft.Text("Drag and drop images here"),
+        alignment=ft.alignment.center,
+        width=400,
+        height=200,
+        border=ft.border.all(1, ft.Colors.BLUE_GREY_400),
+        border_radius=5,
+    )
+
+    # New visual drop target using ft.Container
+    image_drop_area = ft.Container(
+        content=image_drop_area_content,
+        width=400,
+        height=200,
+        border=ft.border.all(1, ft.Colors.BLUE_GREY_400), # Initial border
+        border_radius=5,
+        alignment=ft.alignment.center,
+        on_click=lambda e: file_picker.pick_files(
+            allow_multiple=False, allowed_extensions=["png", "jpg", "jpeg", "gif"]
+        ),
+    )
+
     controls.append(ft.Divider(thickness=1))
     controls.append(ft.ResponsiveRow(controls=[
-        ft.Container(col=6),
+        ft.Column(
+            controls=[
+                ft.Container(
+                    content=ft.Column(
+                        [selected_image_display, ft.Text("Click to select image")],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                    ),
+                    width=400,
+                    height=250,
+                    
+                    border=ft.border.all(1, ft.Colors.BLUE_GREY_400),
+                    border_radius=ft.border_radius.all(5),
+                    alignment=ft.alignment.center,
+                    on_click=lambda e: file_picker.pick_files(
+                        allow_multiple=False, allowed_extensions=["png", "jpg", "jpeg", "gif"]
+                    ),
+                ),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            expand=True,col=6,
+        ),
         r_sum
     ]))
-    
-
-
-    #controls.append(side_controls)
-
-
 
     return controls
 
@@ -467,8 +542,20 @@ def build_training_sampling_page_content():
     Generates and assembles Flet controls for the training and sampling page.
     Returns a Container with all page content.
     """
-    global sampling_status_text
+    global file_picker, sampling_status_text
     page_controls = []
+
+    def on_dialog_result(e: ft.FilePickerResultEvent):
+        if e.files:
+            selected_file_path = e.files[0].path
+            selected_image_display.src = selected_file_path
+            selected_image_display.page.update()
+            global selected_image_path # Declare global to modify it
+            selected_image_path = selected_file_path # Store the selected path
+            print(f"[training_sampling.py] selected_image_path set to: {selected_image_path}")
+
+    file_picker = ft.FilePicker(on_result=on_dialog_result)
+    page_controls.append(file_picker)
 
     # Add Validation Configuration section
     page_controls.extend(_build_validation_config_section())

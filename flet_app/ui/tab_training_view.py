@@ -5,58 +5,96 @@ from ui_popups import dataset_not_selected
 import os
 import yaml
 import subprocess
+import shutil
+import asyncio
+from PIL import Image
 
 # =====================
 # Data/Utility Functions
 # =====================
 
-def save_training_config_to_yaml(training_tab_container):
+async def save_training_config_to_yaml(training_tab_container, selected_image_path: str = None):
     """
     Extracts the config from the UI and saves it as a YAML file.
     Returns the output path and the YAML dictionary.
     """
     from ui.utils.utils_top_menu import TopBarUtils
-    yaml_dict = TopBarUtils.build_yaml_config_from_ui(training_tab_container)
+    yaml_dict = TopBarUtils.build_yaml_config_from_ui(training_tab_container, selected_image_path)
     out_path = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "assets", "config_to_train.yaml")
     )
 
+    # If an image was selected, copy it to the output directory
+    if selected_image_path and os.path.exists(selected_image_path):
+        try:
+            # Extract the output directory from the YAML dictionary
+            output_dir = yaml_dict.get('output_dir')
+            if output_dir:
+                # Ensure the output directory exists
+                os.makedirs(output_dir, exist_ok=True)
+
+                # Extract the lora name from the output_dir (e.g., 'workspace/output/cakeify_lora_13b' -> 'cakeify_lora_13b')
+                lora_name = os.path.basename(output_dir)
+                
+                # Get the original file extension
+                file_extension = os.path.splitext(selected_image_path)[1]
+
+                # Construct the new image path in the output directory
+                destination_image_path = os.path.join(output_dir, f"{lora_name}{file_extension}")
+                
+                # --- Image processing: Scale and Crop ---
+                # Get video_dims from yaml_dict
+                video_dims = yaml_dict.get('validation', {}).get('video_dims')
+                if video_dims and len(video_dims) >= 2:
+                    target_width, target_height = video_dims[0], video_dims[1]
+
+                    img = Image.open(selected_image_path)
+                    original_width, original_height = img.size
+
+                    # Calculate scaling factor to fit the smallest side
+                    scale_factor = max(target_width / original_width, target_height / original_height)
+                    new_width = int(original_width * scale_factor)
+                    new_height = int(original_height * scale_factor)
+
+                    img = img.resize((new_width, new_height), Image.LANCZOS)
+
+                    # Calculate crop box
+                    left = (new_width - target_width) / 2
+                    top = (new_height - target_height) / 2
+                    right = (new_width + target_width) / 2
+                    bottom = (new_height + target_height) / 2
+
+                    img = img.crop((left, top, right, bottom))
+                    img.save(destination_image_path) # Save the processed image
+                    print(f"Processed and copied selected image from {selected_image_path} to {destination_image_path}")
+                    # Update the yaml_dict to point to the processed image
+                    yaml_dict['validation']['images'] = [destination_image_path]
+                else:
+                    # If video_dims not found or invalid, just copy the original image
+                    shutil.copy(selected_image_path, destination_image_path)
+                    print(f"Copied selected image from {selected_image_path} to {destination_image_path}")
+                    # Update the yaml_dict to point to the copied original image
+                    yaml_dict['validation']['images'] = [destination_image_path]
+            else:
+                print("Warning: output_dir not found in YAML config, cannot copy image.")
+        except Exception as e:
+            print(f"Error copying selected image: {e}")
+    else:
+        print("No image selected.")
+        print(selected_image_path)
+        
+
     class InlineListDumper(yaml.SafeDumper):
         pass
 
-    def repr_inline_list(dumper, data):
-        return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=True)
+    InlineListDumper.add_representer(list, lambda dumper, data: dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=True))
 
-    InlineListDumper.add_representer(list, yaml.SafeDumper.represent_list)
+    with open(out_path, "w") as f:
+        yaml.dump(yaml_dict, f, Dumper=InlineListDumper, default_flow_style=False)
 
-    def custom_representer(dumper, data):
-        if hasattr(dumper, '_current_key') and dumper._current_key == 'video_dims':
-            return repr_inline_list(dumper, data)
-        return yaml.SafeDumper.represent_list(dumper, data)
-
-    def represent_mapping(self, tag, mapping, flow_style=None):
-        value = []
-        for item_key, item_value in mapping.items():
-            self._current_key = item_key
-            node_key = self.represent_data(item_key)
-            node_value = self.represent_data(item_value)
-            value.append((node_key, node_value))
-        return yaml.MappingNode(tag, value, flow_style=flow_style)
-
-    InlineListDumper.represent_mapping = represent_mapping
-    InlineListDumper.add_representer(list, custom_representer)
-
-    with open(out_path, 'w', encoding='utf-8') as f:
-        yaml.dump(
-            yaml_dict,
-            f,
-            sort_keys=False,
-            allow_unicode=True,
-            Dumper=InlineListDumper
-        )
     return out_path, yaml_dict
 
-def run_training_batch_file(use_multi_gpu: bool):
+async def run_training_batch_file(use_multi_gpu: bool):
     """
     Runs the appropriate training batch file based on the multi_gpu flag.
     Returns the batch file path.
@@ -227,26 +265,27 @@ def get_training_tab_content(page: ft.Page):
     # Add Multi-GPU checkbox
     multi_gpu_checkbox = ft.Checkbox(label="Multi-GPU", value=False) # False by default
 
-    def handle_training_output(page=None):
+    async def handle_training_output(page=None, training_tab_container=None):
         """
         Handles saving config and running training, with error handling and user feedback.
         """
         try:
-            training_tab_container = None
-            if page is not None:
-                training_tab_container = getattr(page, 'training_tab_container', None)
             if training_tab_container is None:
-                msg = "Error: training_tab_container not found."
+                msg = "Error: training_tab_container not passed to handle_training_output."
                 if page is not None:
                     page.snack_bar = ft.SnackBar(content=ft.Text(msg), open=True)
                     page.update()
+                print(msg) # Add print for debugging
                 return
 
-            out_path, _ = save_training_config_to_yaml(training_tab_container)
+            print(f"handle_training_output called. training_tab_container type: {type(training_tab_container)}") # Debug print
+
+            from .pages.training_sampling import selected_image_path as current_selected_image_path # Get the current value
+            out_path, _ = await save_training_config_to_yaml(training_tab_container, current_selected_image_path)
 
             # Determine which batch file to run based on checkbox state
             use_multi_gpu = multi_gpu_checkbox.value
-            bat_path = run_training_batch_file(use_multi_gpu)
+            bat_path = await run_training_batch_file(use_multi_gpu)
 
             msg = f"Saved config to {out_path}\nBatch file: {bat_path}\nTraining started."
             if page is not None:
@@ -257,28 +296,30 @@ def get_training_tab_content(page: ft.Page):
             if page is not None:
                 page.snack_bar = ft.SnackBar(content=ft.Text(msg), open=True)
                 page.update()
+            print(f"Error in handle_training_output: {e}") # Debug print
 
-    def handle_start_click(e):
+    async def handle_start_click(e, training_tab_container_arg):
         """
         Handles the Start button click: checks dataset selection and triggers training.
         """
         dataset_selected = is_dataset_selected(config_page_content)
         if not dataset_selected:
             def on_confirm():
-                handle_training_output(e.page)
+                e.page.run_task(handle_training_output, e.page, training_tab_container_arg)
             dataset_not_selected.show_dataset_not_selected_dialog(
                 e.page, "Dataset not selected, proceed?", on_confirm
             )
         else:
-            handle_training_output(e.page)
+            e.page.run_task(handle_training_output, e.page, training_tab_container_arg)
 
-    bottom_app_bar = build_bottom_app_bar(handle_start_click, multi_gpu_checkbox)
-    main_container = build_main_container(main_content_row, bottom_app_bar)
+    main_container = build_main_container(main_content_row, 
+        build_bottom_app_bar(lambda e: e.page.run_task(handle_start_click, e, main_container), multi_gpu_checkbox))
 
     # Attach references for later extraction
     main_container.config_page_content = config_page_content
+    
     main_container.sampling_page_content = sampling_page_content
     if hasattr(config_page_content, 'dataset_block'):
         main_container.dataset_page_content = config_page_content.dataset_block
     page.training_tab_container = main_container
-    return main_container 
+    return main_container

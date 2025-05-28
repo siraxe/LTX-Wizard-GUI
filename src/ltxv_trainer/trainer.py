@@ -755,12 +755,9 @@ class LtxvTrainer:
         use_images = self._config.validation.images is not None
 
         if use_images:
-            if len(self._config.validation.images) != len(self._config.validation.prompts):
-                raise ValueError(
-                    f"Number of images ({len(self._config.validation.images)}) must match "
-                    f"number of prompts ({len(self._config.validation.prompts)})"
-                )
-
+            # If images are provided, use the first one for all prompts.
+            # The image path will be taken from self._config.validation.images[0]
+            # The strict length check is removed to allow one image for multiple prompts.
             pipeline = LTXImageToVideoPipeline(
                 scheduler=deepcopy(self._scheduler),
                 vae=self._vae,
@@ -806,7 +803,8 @@ class LtxvTrainer:
             }
 
             if use_images:
-                image_path = self._config.validation.images[j]
+                # Always use the first image if images are provided
+                image_path = self._config.validation.images[0]
                 pipeline_inputs["image"] = open_image_as_srgb(image_path)
 
             with autocast(self._accelerator.device.type, dtype=torch.bfloat16):
@@ -825,7 +823,7 @@ class LtxvTrainer:
         # Move unused components back to CPU.
         self._vae.to("cpu")
         if not self._config.acceleration.load_text_encoder_in_8bit:
-             self._text_encoder.to("cpu") # This line is added/modified
+             self._text_encoder.to("cpu")
 
         rel_outputs_path = output_dir.relative_to(self._config.output_dir)
         logger.info(f"🎥 Validation samples for step {self._global_step} saved in {rel_outputs_path}")
