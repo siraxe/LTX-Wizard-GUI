@@ -1,5 +1,6 @@
 import flet as ft
 import os
+from rich.color import Color
 import yaml # Import yaml for potential future use or reference, though not strictly needed for the CLI approach
 import shlex # For splitting command strings safely
 import json # To parse video_dims list
@@ -287,6 +288,7 @@ def _build_validation_config_section():
     """Builds the Flet controls for the Validation Configuration section."""
     global prompts_textfield, negative_prompt_textfield, video_dims_textfield, seed_textfield, inference_steps_textfield, interval_textfield, videos_per_prompt_textfield, guidance_scale_textfield
     controls = []
+    side_controls = []
     controls.extend(add_section_title("Validation Configuration"))
     
     # Assign controls to global variables and set default value for prompts as a single string
@@ -308,16 +310,36 @@ def _build_validation_config_section():
         prompts_textfield,
         negative_prompt_textfield
     ], vertical_alignment=ft.CrossAxisAlignment.START))
-    controls.append(ft.Row(controls=[
+
+    r1= ft.Row(controls=[
         video_dims_textfield,
         seed_textfield,
         inference_steps_textfield
-    ]))
-    controls.append(ft.Row(controls=[
+    ],col=4, expand=True)
+
+    r2 = ft.Row(controls=[
         interval_textfield,
         videos_per_prompt_textfield,
         guidance_scale_textfield
+    ],col=4, expand=True)
+
+    r_sum = ft.Column(controls=[
+        r1,
+        r2
+    ],col=6, expand=True)
+
+    controls.append(ft.Divider(thickness=1))
+    controls.append(ft.ResponsiveRow(controls=[
+        ft.Container(col=6),
+        r_sum
     ]))
+    
+
+
+    #controls.append(side_controls)
+
+
+
     return controls
 
 def _get_lora_options():
