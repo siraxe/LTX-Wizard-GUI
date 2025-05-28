@@ -144,6 +144,7 @@ class ImageOrVideoDataset(Dataset):
         dataset_file: str | None = None,
         id_token: str | None = None,
         remove_llm_prefixes: bool = False,
+        negative_caption_column: str | None = None,
     ) -> None:
         super().__init__()
 
@@ -153,6 +154,7 @@ class ImageOrVideoDataset(Dataset):
         self.video_column = video_column
         self.id_token = f"{id_token.strip()} " if id_token else ""
         self.resolution_buckets = resolution_buckets
+        self.negative_caption_column = negative_caption_column
 
         # Four methods of loading data are supported.
         #   - Using two files containing line-separate captions and relative paths to videos.
@@ -178,6 +180,7 @@ class ImageOrVideoDataset(Dataset):
             (
                 self.prompts,
                 self.video_paths,
+                self.negative_prompts,
             ) = self._load_dataset_from_json()
         elif dataset_file.endswith(".jsonl"):
             (
@@ -247,6 +250,7 @@ class ImageOrVideoDataset(Dataset):
                 "fps": fps,
             },
             "video_path": str(video_path.relative_to(self.data_root)),
+            "negative_caption": self.negative_prompts[index] if hasattr(self, 'negative_prompts') and self.negative_prompts else "",
         }
 
     def _load_dataset_from_local_path(self) -> tuple[list[str], list[Path]]:
@@ -294,12 +298,19 @@ class ImageOrVideoDataset(Dataset):
 
         return prompts, video_paths
 
-    def _load_dataset_from_json(self) -> tuple[list[str], list[Path]]:
+    def _load_dataset_from_json(self) -> tuple[list[str], list[Path], list[str]]:
         with open(self.dataset_file, "r", encoding="utf-8") as file:
             data = json.load(file)
 
         prompts = [entry[self.caption_column] for entry in data]
         video_paths = [self.data_root.joinpath(entry[self.video_column].strip()) for entry in data]
+
+        negative_prompts: list[str] = []
+        # hasattr check is for safety until __init__ is updated to guarantee negative_caption_column exists
+        if hasattr(self, 'negative_caption_column') and self.negative_caption_column:
+            negative_prompts = [entry.get(self.negative_caption_column, "") for entry in data]
+        else:
+            negative_prompts = ["" for _ in data]
 
         if any(not path.is_file() for path in video_paths):
             raise ValueError(
@@ -307,7 +318,7 @@ class ImageOrVideoDataset(Dataset):
                 f"line-separated paths to video data but found atleast one path that is not a valid file.",
             )
 
-        return prompts, video_paths
+        return prompts, video_paths, negative_prompts
 
     def _load_dataset_from_jsonl(self) -> tuple[list[str], list[Path]]:
         with open(self.dataset_file, "r", encoding="utf-8") as file:

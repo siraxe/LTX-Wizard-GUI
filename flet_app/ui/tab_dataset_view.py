@@ -35,7 +35,6 @@ model_name_dropdown: ft.Dropdown = None
 trigger_word_textfield: ft.TextField = None
 
 # References to controls created in dataset_tab_layout that need external access
-# These refs will hold the actual control instances once created in dataset_tab_layout
 dataset_dropdown_control_ref = ft.Ref[ft.Dropdown]()
 dataset_add_captions_button_ref = ft.Ref[ft.ElevatedButton]()
 dataset_delete_captions_button_ref = ft.Ref[ft.ElevatedButton]()
@@ -85,24 +84,36 @@ def load_dataset_config(dataset_name: str | None) -> tuple[str, str, str]:
             try:
                 with open(dataset_info_json_path, 'r') as f:
                     loaded_data = json.load(f)
-                    if isinstance(loaded_data, dict) and "bucket_model" in loaded_data:
-                        bucket_model_data = loaded_data["bucket_model"]
-                        if isinstance(bucket_model_data, dict):
-                            size_val = bucket_model_data.get("size")
-                            type_val = bucket_model_data.get("type")
-                            trigger_word_val = bucket_model_data.get("trigger_word")
-                            if isinstance(size_val, list):
-                                bucket_to_set = format_bucket_list_to_string(size_val)
-                            if isinstance(type_val, str):
-                                model_to_set = type_val
-                            if isinstance(trigger_word_val, str):
-                                trigger_word_to_set = trigger_word_val
+                    if isinstance(loaded_data, dict):
+                        # Read from top level of loaded_data
+                        bucket_res_val = loaded_data.get("bucket_resolution") # Corresponds to 'size_val'
+                        model_name_val = loaded_data.get("model_name")       # Corresponds to 'type_val'
+                        trigger_word_val = loaded_data.get("trigger_word")
+
+                        # bucket_resolution can be a list or a string representation of a list
+                        if isinstance(bucket_res_val, list):
+                            bucket_to_set = format_bucket_list_to_string(bucket_res_val)
+                        elif isinstance(bucket_res_val, str):
+                            # Attempt to parse if it's a string like "[512, 512, 49]"
+                            parsed_list = parse_bucket_string_to_list(bucket_res_val)
+                            if parsed_list:
+                                bucket_to_set = format_bucket_list_to_string(parsed_list)
+                            else: # If string is not parsable, keep it as is or use default
+                                bucket_to_set = bucket_res_val # Or settings.DEFAULT_BUCKET_SIZE_STR if strict parsing needed
+                        
+                        if isinstance(model_name_val, str):
+                            model_to_set = model_name_val
+                        if isinstance(trigger_word_val, str):
+                            trigger_word_to_set = trigger_word_val
             except (json.JSONDecodeError, IOError):
                 pass
     return bucket_to_set, model_to_set, trigger_word_to_set
 
 def save_dataset_config(dataset_name: str, bucket_str: str, model_name: str, trigger_word: str) -> bool:
     dataset_info_json_path = os.path.join(settings.DATASETS_DIR, dataset_name, "info.json")
+    
+    bucket_str_val = bucket_str # Initialize with the input value
+
     parsed_bucket_list = parse_bucket_string_to_list(bucket_str)
     if parsed_bucket_list is None:
          if e.page:
@@ -114,25 +125,20 @@ def save_dataset_config(dataset_name: str, bucket_str: str, model_name: str, tri
             # Continue with default or previous valid value for saving config
             bucket_str_val = settings.DEFAULT_BUCKET_SIZE_STR # Or load previous valid? Using default for simplicity.
 
-    success = save_dataset_config(
-        dataset_name,
-        bucket_str_val, # Use validated/default value
-        model_name_dropdown.value,
-        trigger_word_textfield.value
-    )
-    if e.page:
-        if success:
-            e.page.snack_bar = ft.SnackBar(
-                content=ft.Text(f"Config saved for {dataset_name}."),
-                open=True
-            )
-        else:
-            e.page.snack_bar = ft.SnackBar(
-                content=ft.Text(f"Error saving config for {dataset_name}"),
-                open=True
-            )
-        e.page.update()
-    return success
+    dataset_config = {
+        "bucket_resolution": bucket_str_val,
+        "model_name": model_name,
+        "trigger_word": trigger_word
+    }
+
+    try:
+        os.makedirs(os.path.dirname(dataset_info_json_path), exist_ok=True)
+        with open(dataset_info_json_path, "w") as f:
+            json.dump(dataset_config, f, indent=4)
+        return True
+    except Exception as e:
+        print(f"Error saving dataset config: {e}")
+        return False
 
 def load_processed_map(dataset_name: str) -> dict | None:
     processed_json_path = os.path.join(settings.DATASETS_DIR, dataset_name, "preprocessed_data", "processed.json")
@@ -522,26 +528,20 @@ def on_rename_files_click(e: ft.ControlEvent):
 def on_bucket_or_model_change(e: ft.ControlEvent):
     current_dataset_name = selected_dataset.get("value")
     if not current_dataset_name:
-        if e.page:
-            e.page.snack_bar = ft.SnackBar(
-                content=ft.Text("No dataset selected. Configuration not saved."),
-                open=True
-            )
-            e.page.update()
         return
 
-    # Validate bucket size format before saving
-    bucket_str_val = bucket_size_textfield.value.strip()
+    bucket_str_val = bucket_size_textfield.value # Initialize bucket_str_val
+
+    # Validate bucket format and update bucket_str_val if invalid
     parsed_bucket_list = parse_bucket_string_to_list(bucket_str_val)
     if parsed_bucket_list is None:
-         if e.page:
+        if e.page:
             e.page.snack_bar = ft.SnackBar(
                 content=ft.Text(f"Invalid Bucket Size format: '{bucket_str_val}'. Using default."),
                 open=True
             )
             e.page.update()
-            # Continue with default or previous valid value for saving config
-            bucket_str_val = settings.DEFAULT_BUCKET_SIZE_STR # Or load previous valid? Using default for simplicity.
+        bucket_str_val = settings.DEFAULT_BUCKET_SIZE_STR # Use default if invalid
 
     success = save_dataset_config(
         current_dataset_name,
@@ -563,7 +563,14 @@ def on_bucket_or_model_change(e: ft.ControlEvent):
         e.page.update()
 
 
-def on_dataset_dropdown_change(ev: ft.ControlEvent, thumbnails_grid_control: ft.GridView, dataset_delete_captions_button_control: ft.ElevatedButton):
+async def on_dataset_dropdown_change(
+    ev: ft.ControlEvent,
+    thumbnails_grid_control: ft.GridView,
+    dataset_delete_captions_button_control: ft.ElevatedButton,
+    bucket_size_textfield_control: ft.TextField, # New argument
+    model_name_dropdown_control: ft.Dropdown,    # New argument
+    trigger_word_textfield_control: ft.TextField # New argument
+):
     # Hide output and progress bar when changing dataset
     if processed_output_field.page:
         processed_output_field.visible = False
@@ -575,15 +582,17 @@ def on_dataset_dropdown_change(ev: ft.ControlEvent, thumbnails_grid_control: ft.
 
     # Load and update config fields based on selected dataset
     bucket_val, model_val, trigger_word_val = load_dataset_config(selected_dataset["value"])
-    if bucket_size_textfield: bucket_size_textfield.value = bucket_val
+    
+    # Use the passed control arguments directly
+    bucket_size_textfield_control.value = bucket_val
     # Ensure loaded model value is a valid choice, otherwise use default
-    if model_name_dropdown: model_name_dropdown.value = model_val if model_val in settings.ltx_models else settings.ltx_def_model
-    if trigger_word_textfield: trigger_word_textfield.value = trigger_word_val or ''
+    model_name_dropdown_control.value = model_val if model_val in settings.ltx_models else settings.ltx_def_model
+    trigger_word_textfield_control.value = trigger_word_val or ''
 
     # Add update calls for the controls
-    if bucket_size_textfield: bucket_size_textfield.update()
-    if model_name_dropdown: model_name_dropdown.update()
-    if trigger_word_textfield: trigger_word_textfield.update()
+    bucket_size_textfield_control.update()
+    model_name_dropdown_control.update()
+    trigger_word_textfield_control.update()
 
     # Update thumbnails for the new dataset
     update_thumbnails(page_ctx=ev.page, grid_control=thumbnails_grid_control)
@@ -594,11 +603,12 @@ def on_dataset_dropdown_change(ev: ft.ControlEvent, thumbnails_grid_control: ft.
 
 
     if ev.page:
-        ev.page.update()
+        ev.page.update() # Use await for page.update()
 
 
-def on_update_button_click(e: ft.ControlEvent, dataset_dropdown_control, thumbnails_grid_control, add_button, delete_button):
-    reload_current_dataset(e.page, dataset_dropdown_control, thumbnails_grid_control, add_button, delete_button)
+async def on_update_button_click(e: ft.ControlEvent, dataset_dropdown_control, thumbnails_grid_control, add_button, delete_button):
+    await update_dataset_dropdown(e.page, dataset_dropdown_control, thumbnails_grid_control, delete_button)
+    await reload_current_dataset(e.page, dataset_dropdown_control, thumbnails_grid_control, add_button, delete_button)
 
 
 def on_add_captions_click_with_model(e: ft.ControlEvent,
@@ -1020,7 +1030,7 @@ def update_dataset_dropdown(
     # Update thumbnails (will show "Select a dataset...")
     update_thumbnails(page_ctx=p_page, grid_control=current_thumbnails_grid)
 
-    # Update delete captions button state (disable)
+    # Update delete captions button state
     if delete_button:
         pass # Keep button always enabled
 
@@ -1274,17 +1284,26 @@ def dataset_tab_layout(page=None):
     # Assign the created control to the global ref AFTER creation
     dataset_dropdown_control_ref.current = dataset_dropdown_control
 
-    update_button_control = ft.IconButton(
-        icon=ft.Icons.REFRESH, tooltip="Update dataset list",
-        style=ft.ButtonStyle(padding=ft.padding.symmetric(horizontal=8)), icon_size=20
-    )
-
-    # Thumbnail Grid (global ref)
     thumbnails_grid_control = ft.GridView(
         ref=thumbnails_grid_ref, # Assign the global ref
         runs_count=5, max_extent=settings.THUMB_TARGET_W + 20,
         child_aspect_ratio=(settings.THUMB_TARGET_W + 10) / (settings.THUMB_TARGET_H + 80), # Adjusted aspect ratio
         spacing=7, run_spacing=7, controls=[], expand=True
+    )
+
+    dataset_dropdown_control.on_change = lambda ev: ev.page.run_task(
+        on_dataset_dropdown_change, # Pass the function itself
+        ev,
+        thumbnails_grid_control,
+        dataset_delete_captions_button_ref.current,
+        bucket_size_textfield,
+        model_name_dropdown,
+        trigger_word_textfield
+    )
+
+    update_button_control = ft.IconButton(
+        icon=ft.Icons.REFRESH, tooltip="Update dataset list",
+        style=ft.ButtonStyle(padding=ft.padding.symmetric(horizontal=8)), icon_size=20
     )
 
     # Captioning specific controls
@@ -1368,15 +1387,10 @@ def dataset_tab_layout(page=None):
     )
 
     # --- Assign Event Handlers ---
-    dataset_dropdown_control.on_change = lambda ev: on_dataset_dropdown_change(
-        ev,
-        thumbnails_grid_ref.current,
-        dataset_delete_captions_button_ref.current # Pass delete button ref's current value
-    )
     update_button_control.on_click = lambda e: reload_current_dataset( # Call reload_current_dataset directly
         e.page,
         dataset_dropdown_control_ref.current,
-        thumbnails_grid_ref.current,
+        thumbnails_grid_control,
         dataset_add_captions_button_ref.current,
         dataset_delete_captions_button_ref.current
     )
@@ -1389,9 +1403,9 @@ def dataset_tab_layout(page=None):
         max_tokens_textfield_ref.current, # Use ref's current value
         dataset_add_captions_button_ref.current, # Use ref's current value
         dataset_delete_captions_button_ref.current, # Use ref's current value
-        thumbnails_grid_ref.current # Use ref's current value
+        thumbnails_grid_control # Use ref's current value
     )
-    dataset_delete_captions_button_control.on_click = lambda e: on_delete_captions_click(e, thumbnails_grid_ref.current) # Use ref's current value
+    dataset_delete_captions_button_control.on_click = lambda e: on_delete_captions_click(e, thumbnails_grid_control) # Use ref's current value
 
     # Assign on_click handler for preprocess button
     dataset_preprocess_button_control.on_click = lambda e: on_preprocess_dataset_click(
@@ -1441,7 +1455,7 @@ def dataset_tab_layout(page=None):
 
     # Assemble the right column
     rc_content = ft.Column([
-        thumbnails_grid_ref.current, # Global ref grid
+        thumbnails_grid_control, # Global ref grid
         bottom_app_bar, # Bottom app bar
     ], alignment=ft.CrossAxisAlignment.STRETCH, expand=True, spacing=10)
 
@@ -1459,7 +1473,7 @@ def dataset_tab_layout(page=None):
     reload_current_dataset(
         p_page,
         dataset_dropdown_control_ref.current,
-        thumbnails_grid_ref.current,
+        thumbnails_grid_control,
         dataset_add_captions_button_ref.current,
         dataset_delete_captions_button_ref.current
     )

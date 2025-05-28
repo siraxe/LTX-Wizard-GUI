@@ -62,6 +62,7 @@ class PreprocessingArgs(BaseModel):
     dataset_path: str
     caption_column: str
     video_column: str
+    negative_caption_column: str | None = "caption_neg"
     resolution_buckets: list[tuple[int, int, int]]
     batch_size: int
     num_workers: int
@@ -149,6 +150,7 @@ class DatasetPreprocessor:
             dataset_file=dataset_file,
             caption_column=args.caption_column,
             video_column=args.video_column,
+            negative_caption_column=args.negative_caption_column,
             resolution_buckets=args.resolution_buckets,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
@@ -262,6 +264,7 @@ class DatasetPreprocessor:
         dataset_file: str | None,
         caption_column: str,
         video_column: str,
+        negative_caption_column: str | None,
         resolution_buckets: list[tuple[int, int, int]],
         batch_size: int,
         num_workers: int,
@@ -274,6 +277,7 @@ class DatasetPreprocessor:
                 dataset_file=dataset_file,
                 caption_column=caption_column,
                 video_column=video_column,
+                negative_caption_column=negative_caption_column,
                 resolution_buckets=resolution_buckets,
                 id_token=id_token,
             )
@@ -303,6 +307,14 @@ class DatasetPreprocessor:
             tokenizer=self.tokenizer,
             text_encoder=self.text_encoder,
             prompt=batch["prompt"],
+            device=self.device,
+        )
+
+        # Encode negative prompts
+        negative_text_embeddings = encode_prompt(
+            tokenizer=self.tokenizer,
+            text_encoder=self.text_encoder,
+            prompt=batch["negative_caption"],
             device=self.device,
         )
 
@@ -342,6 +354,8 @@ class DatasetPreprocessor:
             condition_item = {
                 "prompt_embeds": text_embeddings["prompt_embeds"][i].cpu().contiguous(),
                 "prompt_attention_mask": text_embeddings["prompt_attention_mask"][i].cpu().contiguous(),
+                "negative_prompt_embeds": negative_text_embeddings["prompt_embeds"][i].cpu().contiguous(),
+                "negative_prompt_attention_mask": negative_text_embeddings["prompt_attention_mask"][i].cpu().contiguous(),
             }
 
             torch.save(latent_item, latent_path)
@@ -430,6 +444,13 @@ def main(
         "If dataset_path is a CSV/JSON/JSONL file, this is the column name containing video paths. "
         "If dataset_path is a directory, this is the filename containing line-separated video paths.",
     ),
+    negative_caption_column: str | None = typer.Option(
+        default="caption_neg",
+        help="Column name or filename for negative captions. "
+        "If dataset_path is a file, this is the column name. "
+        "If dataset_path is a directory, this is the filename. "
+        "Provide 'None' or an empty string to disable negative prompts.",
+    ),
     batch_size: int = typer.Option(
         default=1,
         help="Batch size for preprocessing",
@@ -486,10 +507,14 @@ def main(
             param_hint="resolution-buckets",
         )
 
+    # Handle 'None' string for negative_caption_column
+    parsed_negative_caption_column = None if str(negative_caption_column).lower() == "none" or not negative_caption_column else negative_caption_column
+
     args = PreprocessingArgs(
         dataset_path=dataset_path,
         caption_column=caption_column,
         video_column=video_column,
+        negative_caption_column=parsed_negative_caption_column,
         resolution_buckets=parsed_resolution_buckets,
         batch_size=batch_size,
         num_workers=num_workers,
