@@ -13,7 +13,7 @@ COMMON_INPUT_STYLE = {
     "filled": True,
 }
 
-def create_textfield(label, value, hint_text=None, multiline=False, min_lines=1, max_lines=1, expand=None, col=None, on_change=None, tooltip=None):
+def create_textfield(label, value, hint_text=None, multiline=False, min_lines=1, max_lines=1, expand=None, col=None, on_change=None, tooltip=None, keyboard_type=None):
     """Helper function to create a TextField with common styling, accepting expand and col."""
     return ft.TextField(
         label=label,
@@ -26,6 +26,7 @@ def create_textfield(label, value, hint_text=None, multiline=False, min_lines=1,
         col=col,
         on_change=on_change,
         tooltip=tooltip,
+        keyboard_type=keyboard_type,
         **COMMON_INPUT_STYLE
     )
 

@@ -32,22 +32,66 @@ class Config:
 
     def _post_process_settings(self):
         # Reconstruct derived values
-        self._settings['ltx_model_dict'] = {model: model for model in self._settings['ltx_models']}
+        if 'ltx_models' in self._settings: # Check if key exists
+            self._settings['ltx_model_dict'] = {model: model for model in self._settings['ltx_models']}
         
         # Calculate TARGET_ASPECT_RATIO dynamically
-        if 'THUMB_TARGET_W' in self._settings and 'THUMB_TARGET_H' in self._settings:
+        if 'THUMB_TARGET_W' in self._settings and 'THUMB_TARGET_H' in self._settings and \
+           self._settings['THUMB_TARGET_H'] != 0: # Avoid division by zero
             self._settings['TARGET_ASPECT_RATIO'] = self._settings['THUMB_TARGET_W'] / self._settings['THUMB_TARGET_H']
         else:
-            self._settings['TARGET_ASPECT_RATIO'] = None # Or a default value
+            self._settings['TARGET_ASPECT_RATIO'] = 16/9 # Default aspect ratio
 
         # Combine media extensions
-        self._settings['MEDIA_EXTENSIONS'] = self._settings['VIDEO_EXTENSIONS'] + self._settings['IMAGE_EXTENSIONS']
+        if 'VIDEO_EXTENSIONS' in self._settings and 'IMAGE_EXTENSIONS' in self._settings:
+            self._settings['MEDIA_EXTENSIONS'] = self._settings['VIDEO_EXTENSIONS'] + self._settings['IMAGE_EXTENSIONS']
+        else:
+            self._settings['MEDIA_EXTENSIONS'] = [] # Default to empty list
 
-        # Ensure paths are OS-agnostic by splitting and rejoining
-        # This assumes paths in JSON use forward slashes as separators
-        for key in ['DATASETS_DIR', 'THUMBNAILS_BASE_DIR', 'LORA_MODELS_DIR', 'FFMPEG_PATH']:
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+        paths_to_absolutize = ['DATASETS_DIR', 'THUMBNAILS_BASE_DIR', 'LORA_MODELS_DIR']
+        
+        for key in paths_to_absolutize:
             if key in self._settings and isinstance(self._settings[key], str):
-                self._settings[key] = os.path.join(*self._settings[key].split('/'))
+                path_val = str(self._settings[key]) # Ensure it's a string
+                # Normalize separators first (e.g. "path/to/something" -> "path\to\something" on Windows)
+                normalized_path_val = os.path.join(*path_val.split('/'))
+                if not os.path.isabs(normalized_path_val):
+                    normalized_path_val = os.path.join(project_root, normalized_path_val)
+                self._settings[key] = os.path.normpath(normalized_path_val)
+
+        # Handle FFMPEG_PATH separately
+        if 'FFMPEG_PATH' in self._settings and isinstance(self._settings['FFMPEG_PATH'], str):
+            ffmpeg_path_val_raw = str(self._settings['FFMPEG_PATH'])
+            print(f"DEBUG settings.py: Initial FFMPEG_PATH from json: '{ffmpeg_path_val_raw}'")
+
+            if ffmpeg_path_val_raw.lower() not in ['ffmpeg', 'ffmpeg.exe']:
+                # Check if the raw path from JSON is absolute
+                if os.path.isabs(ffmpeg_path_val_raw):
+                    # It's an absolute path, just normalize it (e.g. D:/path -> D:\\path on Win)
+                    self._settings['FFMPEG_PATH'] = os.path.normpath(ffmpeg_path_val_raw)
+                else:
+                    # It's a relative path, join with project_root and normalize
+                    # Normalize slashes in the relative path before joining
+                    relative_path_normalized_slashes = os.path.join(*ffmpeg_path_val_raw.replace('\\', '/').split('/'))
+                    self._settings['FFMPEG_PATH'] = os.path.normpath(os.path.join(project_root, relative_path_normalized_slashes))
+                
+                print(f"DEBUG settings.py: FFMPEG_PATH after normalization: '{self._settings['FFMPEG_PATH']}'")
+            else:
+                # It's 'ffmpeg' or 'ffmpeg.exe', ensure it's stored as such.
+                self._settings['FFMPEG_PATH'] = ffmpeg_path_val_raw 
+                print(f"DEBUG settings.py: FFMPEG_PATH left as '{ffmpeg_path_val_raw}' for system PATH lookup.")
+
+    def get(self, key, default=None):
+        """Retrieve a setting value by key, with an optional default."""
+        print(f"DEBUG settings.py Config.get: Requesting key='{key}'.")
+        # Print the specific value if the key exists, or that it's missing
+        if key in self._settings:
+            print(f"DEBUG settings.py Config.get: Key='{key}' FOUND, Value='{self._settings[key]}'")
+        else:
+            print(f"DEBUG settings.py Config.get: Key='{key}' NOT FOUND in _settings. Returning default='{default}'")
+        return self._settings.get(key, default)
 
     def __getattr__(self, name):
         if name in self._settings:
