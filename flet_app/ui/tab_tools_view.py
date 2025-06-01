@@ -4,10 +4,127 @@ from ._styles import create_textfield, add_section_title, create_styled_button
 import os # Import os module for path manipulation
 import subprocess # Import subprocess
 import asyncio # Import asyncio
+import base64
+import matplotlib
+matplotlib.use('Agg') # Use a non-interactive backend for Matplotlib
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import numpy as np
+import json # Added for parsing script output
+from pathlib import Path
+from datetime import datetime
+import functools
 
 # =====================
 # Helper/Data/Utility Functions
 # =====================
+
+# Placeholder for backend LoRA comparison logic
+async def backend_compare_loras(lora_a_path: str, lora_b_path: str, page: ft.Page, output_plot_path_str: str):
+    # This function will now primarily be a wrapper to call the script
+    # The actual logic is in scripts/compare_loras.py
+    # It will return the stdout of the script for parsing by the caller.
+
+    python_exe = os.path.normpath(os.path.join("venv", "Scripts", "python.exe"))
+    script_path = os.path.normpath(os.path.join("scripts", "compare_loras.py"))
+
+    command_parts = [
+        python_exe,
+        script_path,
+        "--lora-a-path", lora_a_path,
+        "--lora-b-path", lora_b_path,
+        "--output-plot-path", output_plot_path_str
+    ]
+    command_str = " ".join(f'"{part}"' if ' ' in part else part for part in command_parts)
+    
+    # We'll run this command using subprocess directly here for simplicity in returning stdout
+    # or adapt run_script_command if more UI interaction during run is needed.
+    # For now, let's assume a blocking call for simplicity of integrating, 
+    # but run_script_command is better for non-blocking UI.
+    
+    # This is a simplified execution for now. Will be replaced by run_script_command call.
+    # For the purpose of this change, we are modifying how _async_handle_compare_loras_click works.
+    # This backend_compare_loras will be removed or significantly changed when integrating with run_script_command.
+    process = await asyncio.to_thread(
+        subprocess.run, command_str, capture_output=True, text=True, shell=True, check=False
+    )
+    
+    
+    
+    if process.returncode != 0:
+        # Log the error or raise an exception with stderr
+        error_message = f"Error in compare_loras.py: {process.stderr}"
+        print(error_message)
+        # Return something to indicate failure, or raise exception
+        return {"stdout": process.stdout, "stderr": process.stderr, "plot_path": output_plot_path_str, "success": False}
+        
+    return {"stdout": process.stdout, "stderr": process.stderr, "plot_path": output_plot_path_str, "success": True}
+
+    """Simulates backend LoRA comparison. 
+    In a real scenario, this would load LoRA files, compute delta weights, 
+    and calculate similarities/differences per layer.
+    """
+    # Simulate network/computation delay
+    await asyncio.sleep(1) # Keep it short for UI responsiveness
+
+    if not lora_a_path or not lora_b_path:
+        raise ValueError("Both LoRA A and LoRA B paths are required for comparison.")
+    
+    # Check if files exist (basic check)
+    if not os.path.exists(lora_a_path):
+        raise FileNotFoundError(f"LoRA A file not found: {lora_a_path}")
+    if not os.path.exists(lora_b_path):
+        raise FileNotFoundError(f"LoRA B file not found: {lora_b_path}")
+
+    # Dummy data for demonstration
+    dummy_results = [
+        {"layer_name": "down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_q", "similarity": 0.95, "difference": 0.0523},
+        {"layer_name": "down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_k", "similarity": 0.20, "difference": 0.8512},
+        {"layer_name": "mid_block_attentions_0_transformer_blocks_0_attn2_to_out_0", "similarity": 0.65, "difference": 0.3589},
+        {"layer_name": "up_blocks_3_attentions_2_transformer_blocks_0_ff_net_0_proj", "similarity": -0.50, "difference": 1.5077}, 
+        {"layer_name": "up_blocks_3_attentions_2_transformer_blocks_0_norm3", "similarity": 0.0, "difference": 1.0000},
+    ]
+    # Simulate a case where comparison might yield no common layers or an issue
+    # if "empty" in lora_a_path:
+    #     return []
+
+    plot_path = None
+    try:
+        # Generate dummy 3D plot data
+        X = np.arange(-5, 5, 0.25)
+        Y = np.arange(-5, 5, 0.25)
+        X, Y = np.meshgrid(X, Y)
+        R = np.sqrt(X**2 + Y**2)
+        Z = np.sin(R) # Example: a sinc function
+
+        fig = plt.figure(figsize=(8, 6))
+        ax = fig.add_subplot(111, projection='3d')
+        ax.plot_surface(X, Y, Z, cmap='viridis')
+        ax.set_xlabel('X-axis')
+        ax.set_ylabel('Y-axis')
+        ax.set_zlabel('Difference Value')
+        ax.set_title('Dummy 3D LoRA Layer Difference')
+        
+        # Save plot to a temporary file
+        with open(output_plot_path_str, 'wb') as plot_file:
+            plt.savefig(plot_file)
+        plt.close(fig) # Close the figure to free memory
+
+    except Exception as e:
+        print(f"Error generating 3D plot: {e}")
+        plot_path = None # Ensure plot_path is None if generation fails
+
+    return {"table_data": dummy_results, "plot_path": output_plot_path_str}
+
+# Helper for color-coding similarity scores in the DataTable
+def get_similarity_color(similarity_score: float) -> str:
+    if similarity_score > 0.75:
+        return ft.Colors.GREEN_ACCENT_700
+    elif similarity_score > 0.25:
+        return ft.Colors.ORANGE_ACCENT_700
+    elif similarity_score < -0.25: # Strong divergence/conflict
+        return ft.Colors.RED_ACCENT_700
+    return ft.Colors.BLUE_GREY_500 # Neutral or mild similarity/divergence
 
 def get_abs_path(path: str) -> str:
     """Return the absolute path for a given path string."""
@@ -23,6 +140,136 @@ def get_stem_with_comfy_suffix(input_path: str, custom_stem: str = None) -> str:
         return stem_candidate
     return f"{stem_candidate}_comfy"
 
+
+async def _async_handle_compare_loras_click(
+    page: ft.Page, 
+    lora_a_field: ft.TextField, 
+    lora_b_field: ft.TextField, 
+    lora_comparison_status: ft.Text, 
+    lora_comparison_table: ft.DataTable,
+    lora_3d_plot_image_display: ft.Container,
+    # Add references to UI elements needed by run_script_command if we use it directly here
+    # For now, we'll call a modified backend_compare_loras and parse its results.
+    # compare_button: ft.ElevatedButton, # Example if run_script_command is used
+    # progress_bar_compare: ft.ProgressBar # Example
+):
+    lora_a_path = lora_a_field.value
+    lora_b_path = lora_b_field.value
+
+    if not lora_a_path or not lora_b_path:
+        page.show_snack_bar(ft.SnackBar(content=ft.Text("Error: Please select both LoRA A and LoRA B files for comparison."), open=True))
+        return
+
+    lora_comparison_status.value = "Comparing LoRAs... please wait."
+    lora_comparison_table.rows.clear()
+    lora_3d_plot_image_display.content.src = None
+    lora_3d_plot_image_display.content.visible = False
+    page.update()
+
+    persistent_plot_path_str = None # Initialize
+    try:
+        # Define a persistent directory for plots within the flet_app structure
+        base_path = Path(__file__).resolve().parent.parent # Should be flet_app directory
+        plots_dir = base_path / "generated_data" / "plots"
+        plots_dir.mkdir(parents=True, exist_ok=True)
+        
+
+        # Generate a unique filename for the plot
+        lora_a_name_stem = Path(lora_a_path).stem
+        lora_b_name_stem = Path(lora_b_path).stem
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        plot_filename = f"plot_{lora_a_name_stem}_vs_{lora_b_name_stem}_{timestamp}.png"
+        persistent_plot_path_str = str(plots_dir / plot_filename)
+        
+
+        # Call the backend function which now runs the script
+        script_results = await backend_compare_loras(lora_a_path, lora_b_path, page, persistent_plot_path_str)
+        
+        
+        stdout_str = script_results.get("stdout", "")
+        stderr_str = script_results.get("stderr", "")
+        returned_plot_path = script_results.get("plot_path") # This should be temp_plot_path_str
+        success = script_results.get("success", False)
+
+        lora_comparison_table.rows.clear() # Clear previous table data
+        parsed_table_data = []
+        if stdout_str:
+            for line in stdout_str.splitlines():
+                
+                if line.startswith("LAYER_DATA::"):
+                    try:
+                        json_str = line.replace("LAYER_DATA::", "")
+                        item = json.loads(json_str) # Make sure to import json
+                        
+                        parsed_table_data.append(item)
+                        similarity_str = f"{item['similarity']:.4f}"
+                        diff_str = f"{item['difference']:.4f}"
+                        sim_color = get_similarity_color(item['similarity'])
+                        lora_comparison_table.rows.append(
+                            ft.DataRow(cells=[
+                                ft.DataCell(ft.Text(item['layer_name'], tooltip=item['layer_name'])),
+                                ft.DataCell(ft.Text(similarity_str, color=sim_color)),
+                                ft.DataCell(ft.Text(diff_str)),
+                            ])
+                        )
+                    except json.JSONDecodeError as json_err:
+                        print(f"Error decoding JSON from script output: {json_err} on line: {line}")
+                    except KeyError as key_err:
+                        print(f"Missing key in JSON from script output: {key_err} on line: {line}")
+        
+        if not success:
+            lora_comparison_status.value = f"Comparison script failed. Check console/script errors."
+            if stderr_str:
+                lora_comparison_status.value += f" Details: {stderr_str[:200]}..."
+            page.show_snack_bar(ft.SnackBar(content=ft.Text("Comparison script error. See status for details."), open=True))
+        elif not parsed_table_data and not (persistent_plot_path_str and os.path.exists(persistent_plot_path_str)):
+            lora_comparison_status.value = "Comparison complete. No data or plot to display."
+        elif not parsed_table_data:
+            lora_comparison_status.value = "Comparison complete. No tabular data to display."
+        else:
+            lora_comparison_status.value = f"Comparison complete. Displaying {len(parsed_table_data)} layers."
+
+        # Update page after table modifications, before plot display logic
+        page.update()
+
+        if persistent_plot_path_str and os.path.exists(persistent_plot_path_str):
+            try:
+                with open(persistent_plot_path_str, "rb") as image_file:
+                    encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
+                lora_3d_plot_image_display.content.src = None # Clear path-based src
+                lora_3d_plot_image_display.content.src_base64 = f"data:image/png;base64,{encoded_string}"
+                lora_3d_plot_image_display.content.visible = True
+                lora_comparison_status.value = "Comparison complete. Image displayed." # Visual cue
+            except Exception as img_ex:
+                lora_comparison_status.value = f"Error displaying image: {img_ex}" # Visual cue for error
+                lora_3d_plot_image_display.content.visible = False
+                lora_3d_plot_image_display.content.src = None
+                lora_3d_plot_image_display.content.src_base64 = None
+            page.update() # Crucial: Update the page to reflect image src_base64 and visibility change
+        else:
+            lora_comparison_status.value = "Comparison complete. Plot image not found." # Visual cue
+            lora_3d_plot_image_display.content.visible = False
+            lora_3d_plot_image_display.content.src = None # Clear src if image not found
+            lora_3d_plot_image_display.content.src_base64 = None
+            page.update()
+
+    except FileNotFoundError as fnf_err: # This would be for files _async_handle_compare_loras_click itself tries to access
+        lora_comparison_status.value = f"Error: {str(fnf_err)}"
+        page.show_snack_bar(ft.SnackBar(content=ft.Text(f"Error: {str(fnf_err)}"), open=True))
+    except ValueError as val_err:
+        lora_comparison_status.value = f"Error: {str(val_err)}"
+        page.show_snack_bar(ft.SnackBar(content=ft.Text(f"Error: {str(val_err)}"), open=True))
+    except Exception as ex:
+        lora_comparison_status.value = f"An unexpected error occurred: {str(ex)}"
+        page.show_snack_bar(ft.SnackBar(content=ft.Text(f"An unexpected error occurred: {str(ex)}.{type(ex).__name__}"), open=True))
+        print(f"DEBUG: [_async_handle_compare_loras_click] Exception: {ex}", type(ex))
+        import traceback
+        traceback.print_exc()
+    finally:
+        # No longer cleaning up the plot file here as it's persistent.
+        # Consider a separate cleanup mechanism for the plots_dir if it grows too large.
+        page.update()
+
 def build_convert_command(input_lora: str, output_dir: str, output_stem: str) -> str:
     """Build the command string to run the Lora conversion script."""
     python_exe = os.path.normpath(os.path.join("venv", "Scripts", "python.exe"))
@@ -33,8 +280,7 @@ def build_convert_command(input_lora: str, output_dir: str, output_stem: str) ->
 
 async def run_script_command(command_str: str, page_ref: ft.Page, button_ref: ft.ElevatedButton, progress_bar_ref: ft.ProgressBar, output_field_ref: ft.TextField, original_button_text: str):
     """Run a shell command asynchronously and update the UI with the result."""
-    print(f"--- run_script_command entered ---")
-    print(f"Executing command: {command_str}")
+    
     output_field_ref.value = "" # Clear previous output
     output_field_ref.visible = True # Ensure output field is visible from the start
     page_ref.update() # Update UI to show empty output field
@@ -300,31 +546,18 @@ def build_convert_lora_section(page, file_picker_input, file_picker_output):
 # New Merge LoRAs Section
 # =====================
 
-def build_merge_loras_section(page, file_picker_merge_input: FilePicker, file_picker_merge_output: FilePicker):
-    """Build the Merge LoRAs section controls and event handlers."""
+def build_merge_loras_section(page, file_picker_merge_input: FilePicker, file_picker_merge_output: FilePicker, merge_lora_a_field_ref: ft.TextField, merge_lora_b_field_ref: ft.TextField):
+    """Build the Merge LoRAs section controls and event handlers.
+    Uses passed-in TextField references for LoRA A and LoRA B paths.
+    """
     # --- Controls ---
-    # Input LoRA A
-    merge_lora_a_field = create_textfield(
-        "Input LoRA A",
-        None,
-        hint_text="Path to LoRA A .safetensors file",
-        expand=True,
-        col=5
-    )
+    # Buttons for LoRA A and B are still defined here, but they will update the passed-in TextFields.
     merge_lora_a_button = ft.IconButton(
         ft.Icons.FOLDER_OPEN,
         tooltip="Select input LoRA A file",
         col=1,
     )
 
-    # Input LoRA B
-    merge_lora_b_field = create_textfield(
-        "Input LoRA B",
-        None,
-        hint_text="Path to LoRA B .safetensors file",
-        expand=True,
-        col=5
-    )
     merge_lora_b_button = ft.IconButton(
         ft.Icons.FOLDER_OPEN,
         tooltip="Select input LoRA B file",
@@ -430,7 +663,7 @@ def build_merge_loras_section(page, file_picker_merge_input: FilePicker, file_pi
 
     def pick_merge_input_files_result(e: FilePickerResultEvent):
         nonlocal current_picker_target_field # Access the variable from the outer scope
-        if e.files and current_picker_target_field:
+        if e.files and len(e.files) > 0 and current_picker_target_field:
             current_picker_target_field.value = e.files[0].path
             current_picker_target_field.update()
         # Reset target after selection (or cancellation)
@@ -471,8 +704,8 @@ def build_merge_loras_section(page, file_picker_merge_input: FilePicker, file_pi
 
 
     async def handle_merge_loras_click(e):
-        lora_a_path_str = merge_lora_a_field.value
-        lora_b_path_str = merge_lora_b_field.value
+        lora_a_path_str = merge_lora_a_field_ref.value
+        lora_b_path_str = merge_lora_b_field_ref.value
         output_path_str = merge_lora_output_path_field.value
         weights_str = merge_weights_field.value
         technique = merge_technique_dropdown.value
@@ -579,7 +812,7 @@ def build_merge_loras_section(page, file_picker_merge_input: FilePicker, file_pi
 
     def handle_pick_lora_a(e):
         nonlocal current_picker_target_field
-        current_picker_target_field = merge_lora_a_field
+        current_picker_target_field = merge_lora_a_field_ref # Use passed-in reference
         file_picker_merge_input.pick_files(
             allow_multiple=False,
             allowed_extensions=["safetensors"],
@@ -588,7 +821,7 @@ def build_merge_loras_section(page, file_picker_merge_input: FilePicker, file_pi
 
     def handle_pick_lora_b(e):
         nonlocal current_picker_target_field
-        current_picker_target_field = merge_lora_b_field
+        current_picker_target_field = merge_lora_b_field_ref # Use passed-in reference
         file_picker_merge_input.pick_files(
             allow_multiple=False,
             allowed_extensions=["safetensors"],
@@ -617,7 +850,7 @@ def build_merge_loras_section(page, file_picker_merge_input: FilePicker, file_pi
     # Input files A row
     controls.append(
         ft.ResponsiveRow(
-            controls=[merge_lora_a_field, merge_lora_a_button,merge_lora_b_field, merge_lora_b_button],
+            controls=[merge_lora_a_field_ref, merge_lora_a_button, merge_lora_b_field_ref, merge_lora_b_button],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=8
         )
@@ -643,9 +876,19 @@ def build_merge_loras_section(page, file_picker_merge_input: FilePicker, file_pi
     controls.append(ft.ResponsiveRow([progress_bar_merge]))
     # Output display row
     controls.append(ft.ResponsiveRow([output_display_field_merge]))
-
     return controls
 
+
+async def on_compare_click_wrapper(page_arg, lora_a_field_arg, lora_b_field_arg, lora_comparison_status_arg, lora_comparison_table_arg, lora_3d_plot_image_display_arg, e):
+    # 'e' is the event object from Flet, passed by functools.partial as the last argument
+    await _async_handle_compare_loras_click(
+        page=page_arg,
+        lora_a_field=lora_a_field_arg,
+        lora_b_field=lora_b_field_arg,
+        lora_comparison_status=lora_comparison_status_arg,
+        lora_comparison_table=lora_comparison_table_arg,
+        lora_3d_plot_image_display=lora_3d_plot_image_display_arg
+    )
 
 # =====================
 # Main Tab Content Entrypoint
@@ -664,11 +907,18 @@ def get_tools_tab_content(page: ft.Page):
 
     # File pickers for Merge LoRAs section
     # Reusing file_picker_merge_input for both LoRA A and B pickers
-    file_picker_merge_input = FilePicker()
+    file_picker_merge_input = FilePicker() # This will be used by merge_lora_a_button and merge_lora_b_button
     page.overlay.append(file_picker_merge_input)
-    file_picker_merge_output = FilePicker()
+    file_picker_merge_output = FilePicker() # For the output of the merge operation
     page.overlay.append(file_picker_merge_output)
 
+    # Create TextFields for LoRA A and B paths here, to be shared with Merge and Compare sections
+    merge_lora_a_field = create_textfield(
+        "Input LoRA A (for Merge/Compare)", None, hint_text="Path to LoRA A .safetensors file", expand=True, col=5
+    )
+    merge_lora_b_field = create_textfield(
+        "Input LoRA B (for Merge/Compare)", None, hint_text="Path to LoRA B .safetensors file", expand=True, col=5
+    )
 
     # Build Convert Lora section
     page_controls.extend(build_convert_lora_section(page, file_picker_input, file_picker_output))
@@ -676,10 +926,62 @@ def get_tools_tab_content(page: ft.Page):
     # Add a separator for visual distinction
     page_controls.append(ft.Divider(height=20, color=ft.Colors.with_opacity(0.2, ft.Colors.ON_SURFACE)))
 
+    # Build Merge LoRAs section, passing the shared TextFields
+    page_controls.extend(build_merge_loras_section(page, file_picker_merge_input, file_picker_merge_output, merge_lora_a_field, merge_lora_b_field))
 
-    # Build Merge LoRAs section
-    page_controls.extend(build_merge_loras_section(page, file_picker_merge_input, file_picker_merge_output))
+    # Define the button handler using functools.partial to pass arguments
+    lora_comparison_status = ft.Text("Select LoRA A and LoRA B above, then click 'Compare LoRAs'.", col=12)
 
+    lora_3d_plot_image_display_image = ft.Image(visible=False, width=700, height=500, fit=ft.ImageFit.CONTAIN)
+    lora_3d_plot_image_display = ft.Container(
+        content=lora_3d_plot_image_display_image,
+        width=700, # Match image width
+        height=500, # Match image height
+        alignment=ft.alignment.center,
+        visible=False, # Container visibility will control overall overall visibility
+        border=ft.border.all(1, ft.Colors.BLUE_GREY_400), # Optional: add a border for visual clarity
+        border_radius=ft.border_radius.all(5)
+    )
+    # Initialize the comparison table
+    lora_comparison_table = ft.DataTable(
+    columns=[
+        ft.DataColumn(ft.Text("Layer Name")),
+        ft.DataColumn(ft.Text("Cosine Similarity"), numeric=True),
+        ft.DataColumn(ft.Text("Mag. of Difference"), numeric=True),
+    ],
+    rows=[],
+    column_spacing=20,
+    expand=True,)
+
+    compare_button_on_click_handler = functools.partial(
+        on_compare_click_wrapper,  # The external function we defined earlier
+        page,                      # Pass the page object
+        merge_lora_a_field,        # Pass LoRA A text field
+        merge_lora_b_field,        # Pass LoRA B text field
+        lora_comparison_status,    # Pass status text UI element
+        lora_comparison_table,     # Pass table UI element
+        lora_3d_plot_image_display # Pass image display UI element
+    )
+
+    # --- LoRA Comparison Section UI --- 
+    page_controls.append(ft.Divider(height=20, color=ft.Colors.with_opacity(0.2, ft.Colors.ON_SURFACE)))
+    compare_button = create_styled_button("Compare LoRAs", on_click=compare_button_on_click_handler, col=3)
+    # Button row for Compare LoRAs
+    compare_row = ft.Row(controls=[ft.ResponsiveRow(controls=[compare_button],alignment=ft.MainAxisAlignment.END)
+        ]
+    )
+
+
+    page_controls.extend(compare_row.controls)
+    
+    page_controls.append(ft.ResponsiveRow([lora_comparison_status]))
+    page_controls.append(ft.ResponsiveRow(
+        controls=[ft.Container(content=lora_3d_plot_image_display, alignment=ft.alignment.center, expand=True)]
+    ))
+    page_controls.append(ft.ResponsiveRow(
+        controls=[ft.Container(content=lora_comparison_table, expand=True, border=ft.border.all(1, ft.Colors.OUTLINE), border_radius=5, padding=10)], 
+        # The container helps manage scrolling if the table is very wide/long
+    ))
 
     return ft.Container(
         content=ft.Column(
