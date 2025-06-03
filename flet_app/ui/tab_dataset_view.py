@@ -3,6 +3,8 @@ import os
 import json
 import asyncio
 import signal # Added signal import
+import subprocess
+import shutil
 from settings import settings # Import only the config class
 
 
@@ -12,6 +14,7 @@ from ui._styles import create_dropdown, create_styled_button, create_textfield, 
 from ui.utils.utils_datasets import (
     get_dataset_folders,
     get_videos_and_thumbnails,
+    apply_affix_from_textfield, find_and_replace_in_captions # New functions to be created
 )
 
 # ======================================================================================
@@ -43,6 +46,7 @@ caption_model_dropdown_ref = ft.Ref[ft.Dropdown]()
 captions_checkbox_ref = ft.Ref[ft.Checkbox]() # This one is a direct ft.Checkbox, so ref is valid
 cap_command_textfield_ref = ft.Ref[ft.TextField]()
 max_tokens_textfield_ref = ft.Ref[ft.TextField]()
+change_fps_textfield_ref = ft.Ref[ft.TextField]() # Ref for the Change FPS textfield
 
 # Process tracking for stopping script execution
 current_caption_process = {"proc": None}
@@ -329,6 +333,140 @@ async def run_dataset_script_command(
 # ======================================================================================
 # GUI Event Handlers (Handle user interactions)
 # ======================================================================================
+
+def on_change_fps_click(e: ft.ControlEvent):
+    current_dataset_name = selected_dataset.get("value")
+    if not current_dataset_name:
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text("Error: No dataset selected."), open=True)
+            e.page.update()
+        return
+
+    if not change_fps_textfield_ref.current or not change_fps_textfield_ref.current.value:
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text("Error: FPS textfield not available or empty."), open=True)
+            e.page.update()
+        return
+        
+    target_fps_str = change_fps_textfield_ref.current.value.strip()
+    try:
+        target_fps_float = float(target_fps_str)
+        if target_fps_float <= 0:
+            raise ValueError("FPS must be positive")
+    except ValueError:
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error: Invalid FPS value '{target_fps_str}'. Must be a positive number."), open=True)
+            e.page.update()
+        return
+
+    dataset_folder_path = os.path.abspath(os.path.join(settings.DATASETS_DIR, current_dataset_name))
+    if not os.path.isdir(dataset_folder_path):
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error: Dataset folder not found: {dataset_folder_path}"), open=True)
+            e.page.update()
+        return
+
+    ffmpeg_exe = settings.FFMPEG_PATH
+    ffprobe_exe = ""
+    if os.path.isabs(ffmpeg_exe) or os.path.sep in ffmpeg_exe:
+        ffmpeg_dir = os.path.dirname(ffmpeg_exe)
+        ffprobe_basename = "ffprobe.exe" if ffmpeg_exe.lower().endswith(".exe") else "ffprobe"
+        ffprobe_exe = os.path.join(ffmpeg_dir, ffprobe_basename)
+    else: # Assumed to be a command in PATH
+        ffprobe_exe = "ffprobe.exe" if ffmpeg_exe.lower().endswith(".exe") else "ffprobe"
+
+    video_exts = ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.flv', '.gif']
+    processed_files = 0
+    failed_files = 0
+    skipped_files = 0
+
+    # Show initial processing message
+    if e.page:
+        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Processing videos in {current_dataset_name} to {target_fps_float} FPS..."), open=True)
+        e.page.update()
+
+    video_files_in_dataset = [f for f in os.listdir(dataset_folder_path) if os.path.splitext(f)[1].lower() in video_exts]
+
+    if not video_files_in_dataset:
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text("No video files found in the dataset."), open=True)
+            e.page.update()
+        return
+
+    for video_file_name in video_files_in_dataset:
+        input_video_path = os.path.join(dataset_folder_path, video_file_name)
+        base, ext = os.path.splitext(video_file_name)
+        temp_output_video_path = os.path.join(dataset_folder_path, f"{base}_tempfps{ext}")
+        original_fps = None
+
+        try:
+            # Get original FPS
+            ffprobe_cmd = [
+                ffprobe_exe, "-v", "error", "-select_streams", "v:0", 
+                "-show_entries", "stream=r_frame_rate", "-of", 
+                "default=noprint_wrappers=1:nokey=1", input_video_path
+            ]
+            result = subprocess.run(ffprobe_cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                print(f"ffprobe error for {video_file_name}: {result.stderr}")
+                failed_files += 1
+                continue
+            
+            raw_r_frame_rate = result.stdout.strip()
+            if not raw_r_frame_rate:
+                print(f"Could not determine r_frame_rate for {video_file_name}.")
+                failed_files +=1
+                continue
+            
+            if '/' in raw_r_frame_rate:
+                num, den = map(float, raw_r_frame_rate.split('/'))
+                if den == 0: # Avoid division by zero
+                    print(f"Invalid r_frame_rate denominator for {video_file_name}: {raw_r_frame_rate}")
+                    failed_files += 1
+                    continue
+                original_fps = num / den
+            else:
+                original_fps = float(raw_r_frame_rate)
+
+            if abs(original_fps - target_fps_float) < 0.01: # Comparing floats
+                print(f"Skipping {video_file_name}, already at target FPS ({original_fps:.2f}).")
+                skipped_files += 1
+                continue
+
+            # Change FPS using ffmpeg
+            ffmpeg_cmd = [
+                ffmpeg_exe, "-y", "-i", input_video_path, 
+                "-r", str(target_fps_float), 
+                temp_output_video_path
+            ]
+            print(f"Running: {' '.join(ffmpeg_cmd)}")
+            result_ffmpeg = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, check=False)
+
+            if result_ffmpeg.returncode == 0:
+                shutil.move(temp_output_video_path, input_video_path)
+                print(f"Successfully changed FPS for {video_file_name}")
+                processed_files += 1
+            else:
+                print(f"ffmpeg error for {video_file_name}: {result_ffmpeg.stderr}")
+                failed_files += 1
+                if os.path.exists(temp_output_video_path):
+                    os.remove(temp_output_video_path)
+        except Exception as ex:
+            print(f"Error processing {video_file_name}: {ex}")
+            failed_files += 1
+            if os.path.exists(temp_output_video_path):
+                try:
+                    os.remove(temp_output_video_path)
+                except OSError as ose:
+                    print(f"Could not remove temp file {temp_output_video_path}: {ose}")
+    
+    summary_message = f"FPS change complete. Processed: {processed_files}, Skipped: {skipped_files}, Failed: {failed_files}."
+    if e.page:
+        e.page.snack_bar = ft.SnackBar(content=ft.Text(summary_message), open=True)
+        e.page.update()
+
+    if processed_files > 0 and thumbnails_grid_ref.current and e.page:
+        update_thumbnails(e.page, thumbnails_grid_ref.current, force_refresh=True)
 
 def on_rename_files_click(e: ft.ControlEvent):
     current_dataset_name = selected_dataset.get("value")
@@ -1215,26 +1353,51 @@ def _build_preprocessing_section(
         initially_expanded=False, # Set to False
     )
 
-def _build_latent_test_section():
+affix_text_field_ref = ft.Ref[ft.TextField]()
+find_text_field_ref = ft.Ref[ft.TextField]()
+replace_text_field_ref = ft.Ref[ft.TextField]()
+
+def _build_latent_test_section(update_thumbnails_func):
+    find_replace=ft.Column([
+        create_textfield(label="Find",value="",expand=True, ref=find_text_field_ref),
+        create_textfield(label="Replace", value="", expand=True, ref=replace_text_field_ref),
+        create_styled_button("Find and Replace", on_click=lambda e: e.page.run_task(find_and_replace_in_captions,
+            e, selected_dataset, find_text_field_ref, replace_text_field_ref, update_thumbnails_func, thumbnails_grid_ref
+        ))
+    ])
+    prefix_suffix_replace=ft.Column([
+        create_textfield(label="Text",value="",expand=True, ref=affix_text_field_ref),
+        ft.ResponsiveRow([
+            create_styled_button("Add prefix",col=6, on_click=lambda e: e.page.run_task(apply_affix_from_textfield,
+                e, "prefix", selected_dataset, update_thumbnails_func, thumbnails_grid_ref, affix_text_field_ref
+            )),
+            create_styled_button("Add suffix",col=6, on_click=lambda e: e.page.run_task(apply_affix_from_textfield,
+                e, "suffix", selected_dataset, update_thumbnails_func, thumbnails_grid_ref, affix_text_field_ref
+            ))
+        ])
+    ])
     # Use the generic function
     return _build_expansion_tile(
-        title="3. Test latent",
+        title="Batch captions",
         controls=[ # Pass the controls list directly
-            ft.Text("Test here", size=12),
-             ft.Container(height=10), # Spacer
+            find_replace,
+            ft.Divider(thickness=1,height=3),
+            prefix_suffix_replace
         ],
         initially_expanded=False, # Set to False
     )
 
-def _build_rename_section(rename_textfield: ft.TextField, rename_button: ft.ElevatedButton):
+def _build_batch_section(change_fps_section: ft.ResponsiveRow, rename_textfield: ft.TextField, rename_files_button: ft.ElevatedButton):
 
     # No on_click handlers assigned here anymore
     # Use the generic function
     return _build_expansion_tile(
-        title="Rename files",
+        title="Batch files",
         controls=[ # Pass the controls list directly
+            change_fps_section,
+            ft.Divider(thickness=1), # Spacer
             rename_textfield,
-            rename_button
+            rename_files_button,
         ],
         initially_expanded=False, # Set to False
     )
@@ -1378,11 +1541,36 @@ def dataset_tab_layout(page=None):
     # Assign to ref
     dataset_preprocess_button_ref.current = dataset_preprocess_button_control
 
+    # Change fps
+    change_fps_textfield = create_textfield("Change fps", "24",
+                                    expand=True,
+                                    hint_text="fps",col=4,
+    )
+    change_fps_textfield_ref.current = change_fps_textfield # Assign to global ref
+
+    change_fps_button = create_styled_button(
+        "Change fps",
+        tooltip="Change fps",
+        expand=True,
+        on_click=lambda e: e.page.run_task(on_change_fps_click,
+            e, selected_dataset, change_fps_textfield_ref, thumbnails_grid_ref, update_thumbnails_func, settings
+        ),
+        button_style=BTN_STYLE2
+    )
+    change_fps_section = ft.ResponsiveRow([
+        ft.Container(content=change_fps_textfield, col=4,),
+        ft.Container(content=change_fps_button, col=8,),
+    ], spacing=5)
+
+
     # Rename specific controls
-    rename_button = create_styled_button(
+    rename_files_button = create_styled_button(
         "Rename files",
         tooltip="Rename files",
         expand=True,
+        on_click=lambda e: e.page.run_task(on_rename_files_click,
+            e, selected_dataset, rename_textfield, thumbnails_grid_ref, update_thumbnails_func, settings
+        ),
         button_style=BTN_STYLE2
     )
 
@@ -1416,7 +1604,8 @@ def dataset_tab_layout(page=None):
     )
 
     # Assign on_click handler for rename button
-    rename_button.on_click = lambda e: on_rename_files_click(e) # Uses rename_textfield and thumbnails_grid_ref.current internally
+    change_fps_button.on_click = lambda e: on_change_fps_click(e) # Uses rename_textfield and thumbnails_grid_ref.current internally
+    rename_files_button.on_click = lambda e: on_rename_files_click(e) # Uses rename_textfield and thumbnails_grid_ref.current internally
 
     # --- Assemble Sections ---
     dataset_selection_section = _build_dataset_selection_section(dataset_dropdown_control_ref.current, update_button_control)
@@ -1437,9 +1626,9 @@ def dataset_tab_layout(page=None):
         dataset_preprocess_button_ref.current, # Use ref
     )
 
-    latent_test_section = _build_latent_test_section() # Placeholder
+    latent_test_section = _build_latent_test_section(update_thumbnails) # Placeholder
 
-    rename_section = _build_rename_section(rename_textfield, rename_button) # Global control, pass grid ref
+    batch_section = _build_batch_section(change_fps_section, rename_textfield, rename_files_button) # Global control, pass grid ref
 
     # Assemble sections into the left column
     lc_content = ft.Column([
@@ -1447,7 +1636,7 @@ def dataset_tab_layout(page=None):
         captioning_section,
         preprocessing_section,
         latent_test_section, # Placeholder
-        rename_section, # Global control, pass grid ref
+        batch_section, # Global control, pass grid ref
     ], spacing=3, width=200, alignment=ft.MainAxisAlignment.START) # Set spacing to 5 for ExpansionTiles
 
     # Build the bottom status bar
