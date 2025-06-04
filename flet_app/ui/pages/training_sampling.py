@@ -568,7 +568,6 @@ def build_training_sampling_page_content(page: ft.Page):
                     active_image_target_control.parent.update()
                 
                 page.update() # Update the whole page
-                logger.info(f"Image {target_page_attr_name} successfully updated from file picker.")
             except Exception as ex:
                 logger.error(f"Error processing selected file for {target_page_attr_name}: {ex}")
                 logger.error(traceback.format_exc())
