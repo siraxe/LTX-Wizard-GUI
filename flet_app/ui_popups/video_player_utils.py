@@ -388,7 +388,7 @@ def crop_video_from_overlay(
     command = [
         ffmpeg_exe, "-y", "-i", current_video_path,
         "-vf", ",".join(vf_filters),
-        "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
         "-c:a", "aac", "-b:a", "128k", # Or copy audio: "-c:a", "copy"
         temp_output_path
     ]

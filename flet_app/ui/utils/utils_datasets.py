@@ -343,7 +343,7 @@ async def on_change_fps_click(e: ft.ControlEvent, selected_dataset_ref, change_f
             "-vf", f"fps={target_fps_float}",
             "-c:v", "libx264", # Or user-defined codec
             "-preset", "medium", # Or user-defined
-            "-crf", "23", # Or user-defined
+            "-crf", "18", # Or user-defined
             "-c:a", "aac", # Or user-defined
             "-b:a", "128k", # Or user-defined
             output_file
