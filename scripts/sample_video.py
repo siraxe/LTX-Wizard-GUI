@@ -16,7 +16,7 @@ import yaml
 # from ltxv_trainer.config import LtxvTrainerConfig
 # from ltxv_trainer.utils import some_utility_function
 
-def load_model_and_pipeline(checkpoint_path: str, config: LtxvTrainerConfig):
+def load_model_and_pipeline(checkpoint_path: str, config: LtxvTrainerConfig, use_image_to_video_pipeline: bool = False):
     """
     Loads the model components and checkpoint, and sets up the inference pipeline.
     """
@@ -132,13 +132,22 @@ def load_model_and_pipeline(checkpoint_path: str, config: LtxvTrainerConfig):
     # For simplicity here, we'll use LTXPipeline. If you need image conditioning,
     # you'll need to add logic to choose LTXImageToVideoPipeline and provide images.
     logger.debug("Creating pipeline...")
-    pipeline = LTXPipeline(
-        scheduler=deepcopy(scheduler), # Pass a deepcopy to avoid modifying the original
-        vae=vae,
-        text_encoder=text_encoder,
-        tokenizer=tokenizer,
-        transformer=transformer,
-    )
+    if use_image_to_video_pipeline:
+        pipeline = LTXImageToVideoPipeline(
+            scheduler=deepcopy(scheduler),
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            transformer=transformer,
+        )
+    else:
+        pipeline = LTXPipeline(
+            scheduler=deepcopy(scheduler), # Pass a deepcopy to avoid modifying the original
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            transformer=transformer,
+        )
     logger.debug("Pipeline created.")
     pipeline.set_progress_bar_config(disable=False) # Enable progress bar for sampling
 
@@ -146,7 +155,7 @@ def load_model_and_pipeline(checkpoint_path: str, config: LtxvTrainerConfig):
     return pipeline, device
 
 def sample_videos(
-    pipeline: LTXPipeline,
+    pipeline: LTXPipeline | LTXImageToVideoPipeline, # Update type hint
     device: torch.device,
     prompts: list[str],
     output_dir: Path,
@@ -154,7 +163,9 @@ def sample_videos(
     num_inference_steps: int = 50,
     seed: int = 42,
     negative_prompt: str | None = None,
-    # Add parameters for image conditioning if needed (image_paths: list[str] | None = None)
+    image_path: str | None = None, # New parameter for image input
+    decode_timestep=0.05, # Aligned with official config
+    decode_noise_scale=0.025 # Aligned with official config
 ):
     """
     Runs the sampling process for a list of prompts.
@@ -186,8 +197,9 @@ def sample_videos(
         }
 
         # Add image handling here if using LTXImageToVideoPipeline
-        # if image_paths and len(image_paths) > i:
-        #     pipeline_inputs["image"] = open_image_as_srgb(image_paths[i]).to(device)
+        if image_path:
+            logger.info(f"Using image {image_path} as initial frame.")
+            pipeline_inputs["image"] = open_image_as_srgb(image_path).to(device)
 
         with torch.no_grad(): # Ensure no gradients are computed during inference
              # Use autocast for mixed precision inference if desired and available
@@ -222,6 +234,24 @@ def main():
         type=str,
         required=True,
         help="Path to the trainer configuration YAML file."
+    )
+    parser.add_argument(
+        "--image_path",
+        type=str,
+        default=None,
+        help="Path to an initial image for image-to-video generation."
+    )
+    parser.add_argument(
+        "--decode_timestep",
+        type=float,
+        default=0.05,
+        help="Timestep for decoding. Default: 0.05, aligned with official config."
+    )
+    parser.add_argument(
+        "--decode_noise_scale",
+        type=float,
+        default=0.025,
+        help="Noise scale for decoding. Default: 0.025, aligned with official config."
     )
     # Remove or modify arguments that will be read from config
     # parser.add_argument(
@@ -329,7 +359,7 @@ def main():
 
     # Load model and pipeline using the checkpoint path from config
     try:
-        pipeline, device = load_model_and_pipeline(checkpoint_path, config)
+        pipeline, device = load_model_and_pipeline(checkpoint_path, config, use_image_to_video_pipeline=True)
     except Exception as e:
         logger.error(f"Error loading model or pipeline: {e}")
         return
@@ -346,7 +376,9 @@ def main():
             num_inference_steps=inference_steps,
             seed=seed,
             negative_prompt=negative_prompt,
-            # image_paths would be passed here if implemented
+            image_path=args.image_path, # Pass image_path to sample_videos
+            decode_timestep=args.decode_timestep,
+            decode_noise_scale=args.decode_noise_scale
         )
     except Exception as e:
         logger.error(f"Error during video sampling: {e}")
