@@ -62,12 +62,14 @@ The "Sampling" subtab allows you to run inference tests on your model during the
 - `ctrl + O` - open
 - `]` - next video
 - `[` - previous video
+- `C` - hold before changing cropping area for aspect ratio lock 
 
 ---
 
 ![UI 01](flet_app/assets/git_images/ui_01.png)
 ![UI 02](flet_app/assets/git_images/ui_02.png)
 ![UI 03](flet_app/assets/git_images/ui_03.png)
+![UI 04](flet_app/assets/git_images/ui_04.png)
 
 ---
 
