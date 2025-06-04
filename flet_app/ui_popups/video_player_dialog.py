@@ -140,7 +140,7 @@ def build_crop_controls_row(
         min=0.1, max=2.0, value=1.0, divisions=99, # divisions 19 from current dialog, _bak.py had 99
         label="{value}x Speed", round=1, expand=True, # label from current dialog, _bak.py had {value}x
         on_change=lambda e_slider: (
-            setattr(time_remap_value_text, 'value', f"Remapped: {int(original_frames * e_slider.control.value)}"), # Text from current dialog
+            setattr(time_remap_value_text, 'value', f"Remapped: {int(original_frames / e_slider.control.value)}"), # Text from current dialog
             time_remap_value_text.update() if time_remap_value_text.page else None
         )
     )

@@ -64,7 +64,6 @@ class Config:
         # Handle FFMPEG_PATH separately
         if 'FFMPEG_PATH' in self._settings and isinstance(self._settings['FFMPEG_PATH'], str):
             ffmpeg_path_val_raw = str(self._settings['FFMPEG_PATH'])
-            print(f"DEBUG settings.py: Initial FFMPEG_PATH from json: '{ffmpeg_path_val_raw}'")
 
             if ffmpeg_path_val_raw.lower() not in ['ffmpeg', 'ffmpeg.exe']:
                 # Check if the raw path from JSON is absolute
@@ -77,11 +76,9 @@ class Config:
                     relative_path_normalized_slashes = os.path.join(*ffmpeg_path_val_raw.replace('\\', '/').split('/'))
                     self._settings['FFMPEG_PATH'] = os.path.normpath(os.path.join(project_root, relative_path_normalized_slashes))
                 
-                print(f"DEBUG settings.py: FFMPEG_PATH after normalization: '{self._settings['FFMPEG_PATH']}'")
             else:
                 # It's 'ffmpeg' or 'ffmpeg.exe', ensure it's stored as such.
                 self._settings['FFMPEG_PATH'] = ffmpeg_path_val_raw 
-                print(f"DEBUG settings.py: FFMPEG_PATH left as '{ffmpeg_path_val_raw}' for system PATH lookup.")
 
     def get(self, key, default=None):
         """Retrieve a setting value by key, with an optional default."""

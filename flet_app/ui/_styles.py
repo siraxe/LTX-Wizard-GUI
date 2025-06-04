@@ -31,7 +31,7 @@ def create_textfield(label, value, hint_text=None, multiline=False, min_lines=1,
         **kwargs
     )
 
-def create_dropdown(label, value, options, hint_text=None, expand=None, col=None):
+def create_dropdown(label, value, options, hint_text=None, expand=None, col=None, disabled=False):
     """Helper function to create a Dropdown with common styling, accepting expand. If options contains the special key '__include_none__', a 'None' option will be added at the top."""
     include_none = False
     if isinstance(options, dict) and "__include_none__" in options:
@@ -49,6 +49,7 @@ def create_dropdown(label, value, options, hint_text=None, expand=None, col=None
         value=initial_option, # Set the initial value using the key
         hint_text=hint_text,
         options=dropdown_options,
+        disabled=disabled,
         expand=expand,
         col=col,
         scale=0.9,
