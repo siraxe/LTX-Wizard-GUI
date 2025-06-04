@@ -66,10 +66,10 @@ The "Sampling" subtab allows you to run inference tests on your model during the
 
 ---
 
-![UI 01](flet_app/assets/git_images/ui_01.png)
-![UI 02](flet_app/assets/git_images/ui_02.png)
-![UI 03](flet_app/assets/git_images/ui_03.png)
-![UI 04](flet_app/assets/git_images/ui_04.png)
+![GUI 01](flet_app/assets/git_images/gui_01.png)
+![GUI 02](flet_app/assets/git_images/gui_02.png)
+![GUI 03](flet_app/assets/git_images/gui_03.png)
+![GUI 04](flet_app/assets/git_images/gui_04.png)
 
 ---
 

@@ -13,7 +13,7 @@ tmp
 *.pt
 *.mp4
 *.jpg
-*.png
+#*.png
 *.gif
 *.webp
 *.heic
