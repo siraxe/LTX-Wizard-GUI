@@ -50,7 +50,7 @@ class Config:
 
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-        paths_to_absolutize = ['DATASETS_DIR', 'THUMBNAILS_BASE_DIR', 'LORA_MODELS_DIR']
+        paths_to_absolutize = ['DATASETS_DIR', 'DATASETS_IMG_DIR', 'THUMBNAILS_BASE_DIR', 'LORA_MODELS_DIR', 'THUMBNAILS_IMG_BASE_DIR']
         
         for key in paths_to_absolutize:
             if key in self._settings and isinstance(self._settings[key], str):

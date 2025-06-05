@@ -23,12 +23,13 @@ tmp
 *.safetensors
 *.safetensors.index.json
 *.safetensors.index.json.lock
-*.json
+#*.json
 *.yaml
 
 _misc/
 workspace/configs/
 workspace/datasets/
+workspace/datasets_img/
 workspace/thumbnails/
 flet_app/ui/utils/recent_files.txt
 flet_app/assets/config_to_train.yaml

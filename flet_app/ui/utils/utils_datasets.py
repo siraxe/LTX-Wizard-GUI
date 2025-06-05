@@ -67,10 +67,26 @@ def generate_thumbnail(video_path, thumbnail_path):
     return False
 
 def get_dataset_folders():
-    if not os.path.exists(settings.DATASETS_DIR):
-        os.makedirs(settings.DATASETS_DIR, exist_ok=True)
-        return {}
-    return {name: name for name in os.listdir(settings.DATASETS_DIR) if os.path.isdir(os.path.join(settings.DATASETS_DIR, name))}
+    """Gets folder names from both DATASETS_DIR and DATASETS_IMG_DIR."""
+    dataset_folders = {}
+
+    # Add folders from DATASETS_DIR
+    if os.path.exists(settings.DATASETS_DIR):
+        for name in os.listdir(settings.DATASETS_DIR):
+            folder_path = os.path.join(settings.DATASETS_DIR, name)
+            if os.path.isdir(folder_path):
+                dataset_folders[name] = name
+
+    # Add folders from DATASETS_IMG_DIR
+    if os.path.exists(settings.DATASETS_IMG_DIR):
+        for name in os.listdir(settings.DATASETS_IMG_DIR):
+            folder_path = os.path.join(settings.DATASETS_IMG_DIR, name)
+            if os.path.isdir(folder_path):
+                # Only add if not already present from DATASETS_DIR to avoid duplicates
+                if name not in dataset_folders:
+                    dataset_folders[name] = name
+
+    return dataset_folders
 
 def get_videos_and_thumbnails(dataset_name):
     dataset_path = os.path.join(settings.DATASETS_DIR, dataset_name)
