@@ -72,10 +72,12 @@ def build_dialog_stack(background_layer: ft.Container, actual_dialog: ft.Contain
     return ft.Stack(
         [
             background_layer,
-            ft.Column(
-                [ft.Row([actual_dialog], alignment=ft.MainAxisAlignment.CENTER, expand=True,)],
-                alignment=ft.MainAxisAlignment.CENTER,
-                expand=True,
+            ft.Container(
+                content=actual_dialog,
+                top=70, # Offset from top by 70px
+                left=0,
+                right=0,
+                alignment=ft.alignment.top_center # This will center the content horizontally
             )
         ],
         expand=True

@@ -31,6 +31,7 @@ workspace/configs/
 workspace/datasets/
 workspace/datasets_img/
 workspace/thumbnails/
+workspace/thumbnails_img/
 flet_app/ui/utils/recent_files.txt
 flet_app/assets/config_to_train.yaml
 flet_app/ffmpeg/

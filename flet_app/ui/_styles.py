@@ -70,7 +70,11 @@ def add_section_title(title):
 POPUP_ACTIONS_ALIGNMENT = ft.MainAxisAlignment.END
 POPUP_BORDER_RADIUS = ft.border_radius.all(10) # Example radius, adjust as needed
 
-# Video Player Dialog Dimensions
+# Image Player Dialog Dimensions
+IMAGE_PLAYER_DIALOG_WIDTH = 640
+IMAGE_PLAYER_DIALOG_HEIGHT = 480
+
+# Video Player Dialog Dimensions (re-added for video player)
 VIDEO_PLAYER_DIALOG_WIDTH = 640
 VIDEO_PLAYER_DIALOG_HEIGHT = 480
 
@@ -105,4 +109,4 @@ def create_styled_button(text, on_click=None, col=None, width=BUTTON_WIDTH, heig
         height=height,
         col=col,
         **kwargs
-    ) 
+    )

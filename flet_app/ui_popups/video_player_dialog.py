@@ -2,11 +2,12 @@
 import flet as ft
 import os
 from ui._styles import create_textfield, create_styled_button, VIDEO_PLAYER_DIALOG_WIDTH, VIDEO_PLAYER_DIALOG_HEIGHT, BTN_STYLE2
-from ui.flet_hotkeys import AUTO_VIDEO_PLAYBACK, VIDEO_PLAY_PAUSE_KEY, VIDEO_NEXT_KEY, VIDEO_PREV_KEY
+from ui.flet_hotkeys import AUTO_PLAYBACK, PLAY_PAUSE_KEY, NEXT_KEY, PREV_KEY
 from flet_video.video import Video, VideoMedia
 import threading
 import time
 from typing import Optional, List, Callable, Tuple
+import asyncio
 
 from .video_dialog_class import dialog_state
 from . import video_player_utils as vpu
@@ -467,10 +468,10 @@ def handle_caption_dialog_keyboard(page: ft.Page, e: ft.KeyboardEvent):
     try:
         if dialog_state.caption_field_is_focused: return
         key = getattr(e, 'key', None)
-        if key == VIDEO_PLAY_PAUSE_KEY and dialog_state.active_video_player_instance:
+        if key == PLAY_PAUSE_KEY and dialog_state.active_video_player_instance:
             dialog_state.active_video_player_instance.play_or_pause()
-        elif key == VIDEO_PREV_KEY: switch_video_in_dialog(page, -1)
-        elif key == VIDEO_NEXT_KEY: switch_video_in_dialog(page, 1)
+        elif key == PREV_KEY: switch_video_in_dialog(page, -1)
+        elif key == NEXT_KEY: switch_video_in_dialog(page, 1)
         elif key == "C" and not dialog_state.caption_field_is_focused:
             dialog_state.c_key_scaling_active = True
     except Exception as ex: print(f"Keyboard handler error: {ex}")
@@ -494,7 +495,7 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
     dialog_state.active_toggle_crop_visibility_func = toggle_crop_editor_overlay_visibility
 
     nav_controls = build_navigation_controls(lambda e: switch_video_in_dialog(page, -1), lambda e: switch_video_in_dialog(page, 1))
-    video_player_stack, actual_video_player = build_video_player(video_path, autoplay=AUTO_VIDEO_PLAYBACK)
+    video_player_stack, actual_video_player = build_video_player(video_path, autoplay=AUTO_PLAYBACK)
     dialog_state.active_video_player_instance = actual_video_player
 
     metadata = vpu.get_video_metadata(video_path)
@@ -569,6 +570,7 @@ def open_video_captions_dialog(page: ft.Page, video_path: str, video_list: Optio
     if not video_path: return
     if video_list is None: video_list = [video_path]
     dialog_state.dialog_is_open = True
+    dialog_state.overlay_is_visible = False # Initialize overlay visibility
     main_content_ui, nav_prefix_controls = create_video_player_with_captions_content(page, video_path, video_list, on_caption_updated_callback)
 
     dialog_title_text = os.path.basename(video_path)
@@ -609,27 +611,105 @@ def update_playback_range_and_seek_video(start_frame: int, end_frame: int):
         dialog_state.total_frames_text_instance.value = f"Total: {end_frame - start_frame}"; dialog_state.total_frames_text_instance.update()
 
 def handle_dialog_dismiss(page: ft.Page):
-    dialog_state.dialog_is_open = False
-    if dialog_state.frame_update_timer and dialog_state.frame_update_timer.is_alive():
-        dialog_state.frame_update_timer.join(timeout=0.2)
-        dialog_state.frame_update_timer = None
-    if dialog_state.active_caption_field_instance and dialog_state.current_video_path_for_dialog:
-        vpu.save_caption_for_video(dialog_state.current_video_path_for_dialog, dialog_state.active_caption_field_instance.value.strip(), 'caption')
-        if dialog_state.active_on_caption_updated_callback: dialog_state.active_on_caption_updated_callback() # Call if callable
-    if dialog_state.active_caption_neg_field_instance and dialog_state.current_video_path_for_dialog:
-        vpu.save_caption_for_video(dialog_state.current_video_path_for_dialog, dialog_state.active_caption_neg_field_instance.value.strip(), 'negative_caption')
-        if dialog_state.active_on_caption_updated_callback: dialog_state.active_on_caption_updated_callback() # Call if callable
-    if page:
-        page.video_dialog_open = False
-        page.video_dialog_hotkey_handler = None
-    if dialog_state.overlay_is_visible and hasattr(dialog_state, 'active_toggle_crop_visibility_func') and callable(dialog_state.active_toggle_crop_visibility_func):
-        dialog_state.active_toggle_crop_visibility_func()
-    if hasattr(dialog_state, 'active_toggle_crop_visibility_func'):
-        dialog_state.active_toggle_crop_visibility_func = None
+    try:
+        # Save any unsaved captions if they've been modified
+        if hasattr(dialog_state, 'current_video_path_for_dialog') and dialog_state.current_video_path_for_dialog:
+            if (hasattr(dialog_state, 'active_caption_field_instance') and 
+                dialog_state.active_caption_field_instance and 
+                getattr(dialog_state.active_caption_field_instance, 'dirty', True)):
+                success, _ = vpu.save_caption_for_video(
+                    dialog_state.current_video_path_for_dialog, 
+                    dialog_state.active_caption_field_instance.value.strip() if dialog_state.active_caption_field_instance.value else "", 
+                    'caption'
+                )
+                if success: captions_saved = True
+            
+            if (hasattr(dialog_state, 'active_caption_neg_field_instance') and 
+                dialog_state.active_caption_neg_field_instance and 
+                getattr(dialog_state.active_caption_neg_field_instance, 'dirty', True)):
+                success, _ = vpu.save_caption_for_video(
+                    dialog_state.current_video_path_for_dialog, 
+                    dialog_state.active_caption_neg_field_instance.value.strip() if dialog_state.active_caption_neg_field_instance.value else "", 
+                    'negative_caption'
+                )
+                if success: captions_saved = True
+        
+        # Call the update callback if captions were saved
+        if captions_saved and dialog_state.active_on_caption_updated_callback:
+            # Ensure it's called as a coroutine if it is one
+            if asyncio.iscoroutinefunction(dialog_state.active_on_caption_updated_callback):
+                page.run_task(dialog_state.active_on_caption_updated_callback)
+            else:
+                dialog_state.active_on_caption_updated_callback()
 
-    dialog_state.active_video_player_instance = None
-    dialog_state.overlay_visual_instance = None
-    dialog_state.overlay_control_instance = None
+        # Batch clear page attributes
+        page_attrs = ['video_dialog_open', 'video_dialog_hotkey_handler']
+        for attr in page_attrs:
+            if hasattr(page, attr):
+                delattr(page, attr)
+        
+        # Reset dialog state attributes to their default/initial values
+        dialog_state.dialog = None
+        dialog_state.overlay_visual_instance = None
+        dialog_state.overlay_control_instance = None
+        dialog_state.video_feedback_overlay = None
+        dialog_state.active_caption_field_instance = None
+        dialog_state.active_caption_neg_field_instance = None
+        dialog_state.active_message_container_instance = None
+        dialog_state.current_video_path_for_dialog = None
+        dialog_state.current_video_list_for_dialog = None
+        dialog_state.active_on_caption_updated_callback = None
+        dialog_state.active_video_player_instance = None
+        dialog_state.page = None
+        dialog_state.video_path = None # Assuming video_path exists in dialog_state
+        dialog_state.video_list = None # Assuming video_list exists in dialog_state
+        dialog_state.on_caption_updated_callback = None
+        dialog_state.active_toggle_crop_visibility_func = None
+        dialog_state.overlay_is_visible = False
+        dialog_state.caption_field_is_focused = False
+        dialog_state.dialog_is_open = False
+        dialog_state.c_key_scaling_active = False
+        dialog_state.aspect_ratio_locked = False
+        dialog_state.locked_aspect_ratio = 0.0
+        dialog_state.overlay_pan_start_x = 0.0
+        dialog_state.overlay_pan_start_y = 0.0
+        dialog_state.overlay_initial_box_left = 0.0
+        dialog_state.overlay_initial_box_top = 0.0
+        dialog_state.overlay_initial_box_width = 0.0
+        dialog_state.overlay_initial_box_height = 0.0
+        dialog_state.overlay_interaction_mode = "none"
+        dialog_state.active_width_field_instance = None
+        dialog_state.active_height_field_instance = None
+        dialog_state.frame_update_timer = None
+        dialog_state.playback_start_frame = 0
+        dialog_state.playback_end_frame = -1
+        dialog_state.reframed_playback = False
+        dialog_state.is_processing_completion = False
+        dialog_state.last_completion_processed_time = 0.0
+        dialog_state.is_video_restarting = False
+        dialog_state.last_video_error = ""
+        dialog_state.video_restart_timer = None
+        dialog_state.start_value_text_instance = None
+        dialog_state.end_value_text_instance = None
+        dialog_state.total_frames_text_instance = None
+        dialog_state.frame_range_slider_instance = None
+        dialog_state.video_feedback_timer = None
+        dialog_state.video_is_playing = [False] # Reset to initial state
+        
+        # Close dialog if still open - simplified logic
+        if hasattr(page, 'dialog') and page.dialog:
+            page.dialog.open = False
+        
+        # Single page update at the end
+        try:
+            page.update()
+        except Exception as update_error:
+            print(f"Error updating page: {update_error}")
+            
+    except Exception as ex:
+        print(f"Error in handle_dialog_dismiss: {ex}")
+        import traceback
+        traceback.print_exc()
 
 def on_overlay_pan_start(e: ft.DragStartEvent):
     if not dialog_state.overlay_control_instance or not dialog_state.overlay_visual_instance: return

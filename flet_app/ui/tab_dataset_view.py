@@ -5,9 +5,10 @@ import asyncio
 import signal # Added signal import
 import subprocess
 import shutil
+import time
 from settings import settings # Import only the config class
 
-
+from ui_popups.image_player_dialog import open_image_captions_dialog
 from ui_popups.video_player_dialog import open_video_captions_dialog
 from ui_popups.delete_caption_dialog import show_delete_caption_dialog
 from ui._styles import create_dropdown, create_styled_button, create_textfield, BTN_STYLE2
@@ -23,6 +24,7 @@ from ui.utils.utils_datasets import (
 
 # References to UI controls
 selected_dataset = {"value": None}
+DATASETS_TYPE = {"value": None} # "image" or "video"
 video_files_list = {"value": []}
 thumbnails_grid_ref = ft.Ref[ft.GridView]()
 processed_progress_bar = ft.ProgressBar(visible=False)
@@ -83,7 +85,8 @@ def load_dataset_config(dataset_name: str | None) -> tuple[str, str, str]:
     model_to_set = settings.ltx_def_model
     trigger_word_to_set = ''
     if dataset_name:
-        dataset_info_json_path = os.path.join(settings.DATASETS_DIR, dataset_name, "info.json")
+        base_dir, _ = _get_dataset_base_dir(dataset_name) # Unpack the tuple
+        dataset_info_json_path = os.path.join(base_dir, dataset_name.replace('(img) ', '').replace(' (img)', ''), "info.json")
         if os.path.exists(dataset_info_json_path):
             try:
                 with open(dataset_info_json_path, 'r') as f:
@@ -114,7 +117,8 @@ def load_dataset_config(dataset_name: str | None) -> tuple[str, str, str]:
     return bucket_to_set, model_to_set, trigger_word_to_set
 
 def save_dataset_config(dataset_name: str, bucket_str: str, model_name: str, trigger_word: str) -> bool:
-    dataset_info_json_path = os.path.join(settings.DATASETS_DIR, dataset_name, "info.json")
+    base_dir = _get_dataset_base_dir(dataset_name)
+    dataset_info_json_path = os.path.join(base_dir, dataset_name.replace('(img) ', '').replace(' (img)', ''), "info.json")
     
     bucket_str_val = bucket_str # Initialize with the input value
 
@@ -142,10 +146,11 @@ def save_dataset_config(dataset_name: str, bucket_str: str, model_name: str, tri
         return True
     except Exception as e:
         print(f"Error saving dataset config: {e}")
-        return False
+    return False
 
 def load_processed_map(dataset_name: str) -> dict | None:
-    processed_json_path = os.path.join(settings.DATASETS_DIR, dataset_name, "preprocessed_data", "processed.json")
+    base_dir, _ = _get_dataset_base_dir(dataset_name) # Unpack the tuple
+    processed_json_path = os.path.join(base_dir, dataset_name.replace('(img) ', '').replace(' (img)', ''), "preprocessed_data", "processed.json")
     if os.path.exists(processed_json_path):
         try:
             with open(processed_json_path, "r", encoding="utf-8") as f:
@@ -155,7 +160,8 @@ def load_processed_map(dataset_name: str) -> dict | None:
     return None
 
 def load_dataset_captions(dataset_name: str) -> list:
-    dataset_captions_json_path = os.path.join(settings.DATASETS_DIR, dataset_name, "captions.json")
+    base_dir, _ = _get_dataset_base_dir(dataset_name) # Unpack the tuple
+    dataset_captions_json_path = os.path.join(base_dir, dataset_name.replace('(img) ', '').replace(' (img)', ''), "captions.json")
     if os.path.exists(dataset_captions_json_path):
         try:
             with open(dataset_captions_json_path, 'r', encoding='utf-8') as f:
@@ -165,7 +171,8 @@ def load_dataset_captions(dataset_name: str) -> list:
     return []
 
 def delete_captions_file(dataset_name: str) -> bool:
-    captions_file_path = os.path.join(settings.DATASETS_DIR, dataset_name, "captions.json")
+    base_dir, _ = _get_dataset_base_dir(dataset_name) # Unpack the tuple
+    captions_file_path = os.path.join(base_dir, dataset_name.replace('(img) ', '').replace(' (img)', ''), "captions.json")
     if os.path.exists(captions_file_path):
         try:
             os.remove(captions_file_path)
@@ -183,10 +190,19 @@ def validate_bucket_values(W_val, H_val, F_val) -> list[str]:
     # Adjusted validation for Frames based on typical dataset preprocessing requirements
     if F_val is None or not isinstance(F_val, int) or F_val <= 0:
          errors.append(f"Frames ({F_val}) must be a positive integer.")
-    # Add specific validation if needed (e.g., F_val >= 5 and (F_val - 1) % 4 == 0) - keeping original for now
-    if F_val is not None and (F_val < 5 or (F_val - 1) % 4 != 0):
-         errors.append(f"Frames ({F_val}) invalid (must be >= 5 and 4n+1).")
+    # Special case: Allow 1 frame for images, otherwise validate as video (4n+1 and >=5)
+    if F_val is not None and F_val != 1:
+        if F_val < 5 or (F_val - 1) % 4 != 0:
+            errors.append(f"Frames ({F_val}) invalid (must be 1 for images or ≥5 and 4n+1 for videos).")
     return errors
+
+def _get_dataset_base_dir(dataset_name: str) -> tuple[str, str]:
+    clean_name = dataset_name.replace('(img) ', '').replace(' (img)', '')
+    # Check if it's explicitly marked as image or if the folder exists in the image datasets directory
+    if dataset_name.startswith('(img) ') or dataset_name.endswith(' (img)') or \
+       os.path.exists(os.path.join(settings.DATASETS_IMG_DIR, clean_name)):
+        return settings.DATASETS_IMG_DIR, "image"
+    return settings.DATASETS_DIR, "video"
 
 # ======================================================================================
 # Script Command Building Functions (Generate CLI commands)
@@ -359,7 +375,8 @@ def on_change_fps_click(e: ft.ControlEvent):
             e.page.update()
         return
 
-    dataset_folder_path = os.path.abspath(os.path.join(settings.DATASETS_DIR, current_dataset_name))
+    base_dir, _ = _get_dataset_base_dir(current_dataset_name)
+    dataset_folder_path = os.path.abspath(os.path.join(base_dir, current_dataset_name.replace('(img) ', '').replace(' (img)', '')))
     if not os.path.isdir(dataset_folder_path):
         if e.page:
             e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error: Dataset folder not found: {dataset_folder_path}"), open=True)
@@ -469,7 +486,10 @@ def on_change_fps_click(e: ft.ControlEvent):
         update_thumbnails(e.page, thumbnails_grid_ref.current, force_refresh=True)
 
 def on_rename_files_click(e: ft.ControlEvent):
+    print("\n=== RENAME FUNCTION CALLED (tab_dataset_view.py) ===")
     current_dataset_name = selected_dataset.get("value")
+    print(f"[DEBUG] Current dataset name: {current_dataset_name}")
+    
     if not current_dataset_name:
         if e.page:
             e.page.snack_bar = ft.SnackBar(content=ft.Text("Error: No dataset selected for renaming."), open=True)
@@ -483,21 +503,80 @@ def on_rename_files_click(e: ft.ControlEvent):
             e.page.update()
         return
 
-    dataset_folder_path = os.path.abspath(os.path.join(settings.DATASETS_DIR, current_dataset_name))
-    video_exts = ['.mp4', '.mov', '.avi', '.webm', '.mkv']
-    # Get existing video files
-    existing_video_files = {f for f in os.listdir(dataset_folder_path) if os.path.splitext(f)[1].lower() in video_exts}
-    video_files_to_rename = sorted(list(existing_video_files)) # Sort for consistent renaming order
+    # Clean the dataset name by removing any image markers (both old and new formats)
+    clean_current_name = current_dataset_name.replace('(img) ', '').replace(' (img)', '')
+    clean_base_name = base_name.replace('(img) ', '').replace(' (img)', '')
+    
+    print(f"[DEBUG] Clean current name: {clean_current_name}")
+    print(f"[DEBUG] Clean base name: {clean_base_name}")
 
-
-    if not video_files_to_rename:
+    # Determine dataset type using the global variable
+    dataset_type = DATASETS_TYPE["value"]
+    
+    print(f"[DEBUG] Dataset type: {dataset_type}")
+    
+    if dataset_type == "image":
+        source_dir = os.path.join(settings.DATASETS_IMG_DIR, clean_current_name)
+        target_dir = os.path.join(settings.DATASETS_IMG_DIR, clean_base_name)
+        file_extensions = settings.IMAGE_EXTENSIONS
+        file_type = 'image'
+    else: # dataset_type == "video"
+        source_dir = os.path.join(settings.DATASETS_DIR, clean_current_name)
+        target_dir = os.path.join(settings.DATASETS_DIR, clean_base_name)
+        file_extensions = settings.VIDEO_EXTENSIONS
+        file_type = 'video'
+    
+    print(f"[DEBUG] Source directory: {source_dir}")
+    print(f"[DEBUG] Target directory: {target_dir}")
+    
+    if not os.path.exists(source_dir):
+        error_msg = f"Error: Source directory not found: {source_dir}"
+        print(f"[ERROR] {error_msg}")
         if e.page:
-            e.page.snack_bar = ft.SnackBar(content=ft.Text("No video files found to rename."), open=True)
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(error_msg), open=True)
+            e.page.update()
+        return
+    
+    # Get existing files with appropriate extensions
+    existing_files = set()
+    try:
+        for f in os.listdir(source_dir):
+            file_ext = os.path.splitext(f)[1].lower().lstrip('.')
+            if file_ext in file_extensions:
+                existing_files.add(f)
+        print(f"[DEBUG] Found {len(existing_files)} files to rename")
+        print(f"[DEBUG] Looking for extensions: {file_extensions}")
+        print(f"[DEBUG] Files in directory: {os.listdir(source_dir)[:10]}")  # Print first 10 files for debugging
+    except Exception as ex:
+        error_msg = f"Error reading files from {source_dir}: {str(ex)}"
+        print(f"[ERROR] {error_msg}")
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(error_msg), open=True)
+            e.page.update()
+        return
+    
+    if not existing_files:
+        error_msg = f"No {file_type} files found in {source_dir}"
+        print(f"[ERROR] {error_msg}")
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(error_msg), open=True)
+            e.page.update()
+        return
+    
+    files_to_rename = sorted(list(existing_files))  # Sort for consistent renaming order
+
+    if not files_to_rename:
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(
+                content=ft.Text(f"No {file_type} files found to rename in '{clean_dataset_name}'."), 
+                open=True
+            )
             e.page.update()
         return
 
     # --- Validate and clean up captions.json before renaming ---
-    captions_path = os.path.join(dataset_folder_path, "captions.json")
+    captions_path = os.path.join(source_dir, "captions.json")
+    captions_data = []
     if os.path.exists(captions_path):
         try:
             with open(captions_path, "r", encoding="utf-8") as f:
@@ -512,7 +591,7 @@ def on_rename_files_click(e: ft.ControlEvent):
                 if isinstance(entry, dict) and "media_path" in entry:
                     media_path_value = entry.get("media_path")
                     # Check if the media_path value exists as a file in the dataset folder
-                    if media_path_value and os.path.exists(os.path.join(dataset_folder_path, media_path_value)):
+                    if media_path_value and os.path.exists(os.path.join(source_dir, media_path_value)):
                         cleaned_captions_data.append(entry)
                     else:
                         # Log a warning and increment removed count
@@ -547,7 +626,7 @@ def on_rename_files_click(e: ft.ControlEvent):
 
     # Prepare new names and check for collisions
     new_names = []
-    for idx, old_name in enumerate(video_files_to_rename, 1):
+    for idx, old_name in enumerate(files_to_rename, 1):
         ext = os.path.splitext(old_name)[1]
         new_name = f"{base_name}_{idx:02d}{ext}"
         new_names.append(new_name)
@@ -562,7 +641,7 @@ def on_rename_files_click(e: ft.ControlEvent):
     # Ensure no existing file will be overwritten (excluding files being renamed)
     # We use the initial set of existing files for this check
     for new_name in new_names:
-        if new_name in existing_video_files and new_name not in new_names: # Check against original existing files, exclude the new names being created
+        if new_name in existing_files and new_name not in new_names: # Check against original existing files, exclude the new names being created
             if e.page:
                 e.page.snack_bar = ft.SnackBar(content=ft.Text(f"File {new_name} already exists and is not part of this renaming batch. Aborting."), open=True)
                 e.page.update()
@@ -571,16 +650,19 @@ def on_rename_files_click(e: ft.ControlEvent):
     # Rename files and build old_to_new map
     old_to_new = {}
     renaming_successful = True
-    for old_name, new_name in zip(video_files_to_rename, new_names):
-        old_path = os.path.join(dataset_folder_path, old_name)
-        new_path = os.path.join(dataset_folder_path, new_name)
+    for old_name, new_name in zip(files_to_rename, new_names):
+        old_path = os.path.join(source_dir, old_name)
+        new_path = os.path.join(source_dir, new_name)
         try:
             os.rename(old_path, new_path)
             old_to_new[old_name] = new_name
+            print(f"[DEBUG] Renamed {old_name} to {new_name}")
         except Exception as ex:
             renaming_successful = False
+            error_msg = f"Failed to rename {old_name} to {new_name}: {ex}"
+            print(f"[ERROR] {error_msg}")
             if e.page:
-                e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Failed to rename {old_name} to {new_name}: {ex}"), open=True)
+                e.page.snack_bar = ft.SnackBar(content=ft.Text(error_msg), open=True)
                 e.page.update()
             # Decide whether to stop or continue. Stopping is safer to avoid partial renames.
             return # Stop if any rename fails
@@ -620,7 +702,8 @@ def on_rename_files_click(e: ft.ControlEvent):
             # Continue as file renaming was successful, but notify user
 
     # Update info.json if exists (rename keys, preserve values, never duplicate)
-    info_path = os.path.join(dataset_folder_path, "info.json")
+    info_path = os.path.join(source_dir, "info.json")
+    print(f"[DEBUG] Checking for info.json at: {info_path}")
     if os.path.exists(info_path):
         try:
             with open(info_path, "r", encoding="utf-8") as f:
@@ -646,19 +729,45 @@ def on_rename_files_click(e: ft.ControlEvent):
                         changed = True
                 info_data = new_info_data
             # No need for recursive update for other types if structure is standardized
-            if changed:
-                with open(info_path, "w", encoding="utf-8") as f:
-                    json.dump(info_data, f, indent=4, ensure_ascii=False)
+            # Check for cap and proc directories and set flags
+            cap_dir = os.path.join(source_dir, "cap")
+            proc_dir = os.path.join(source_dir, "proc")
+            
+            if os.path.isdir(cap_dir):
+                print(f"[DEBUG] Found 'cap' directory, setting 'cap' to 'yes'")
+                info_data["cap"] = "yes"
+            
+            if os.path.isdir(proc_dir):
+                print(f"[DEBUG] Found 'proc' directory, setting 'proc' to 'yes'")
+                info_data["proc"] = "yes"
+            
+            # Save the updated info.json
+            with open(info_path, "w", encoding="utf-8") as f:
+                json.dump(info_data, f, indent=2, ensure_ascii=False)
+                print(f"[DEBUG] Updated info.json with cap/proc settings")
         except Exception as ex:
-            if e.page:
-                e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Failed to update info.json after renaming: {ex}"), open=True)
-                e.page.update()
-            # Continue as file renaming was successful, but notify user
+            print(f"Error updating info.json: {ex}")
+            # Non-critical, continue
 
     # Success feedback and UI update
     if renaming_successful:
+        # Determine the correct thumbnail directory
+        if dataset_type == "image":
+            thumbnails_dir = os.path.join(settings.THUMBNAILS_IMG_BASE_DIR, clean_current_name)
+        else:
+            thumbnails_dir = os.path.join(settings.THUMBNAILS_BASE_DIR, clean_current_name)
+
+        # Clean up all existing thumbnails in the directory
+        if os.path.exists(thumbnails_dir):
+            for thumb_file in os.listdir(thumbnails_dir):
+                try:
+                    os.remove(os.path.join(thumbnails_dir, thumb_file))
+                    print(f"[DEBUG] Deleted old thumbnail: {thumb_file}")
+                except Exception as ex:
+                    print(f"[ERROR] Failed to delete old thumbnail {thumb_file}: {ex}")
+
         if e.page:
-            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Renamed {len(video_files_to_rename)} files successfully."), open=True)
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Renamed {len(files_to_rename)} files successfully and cleaned up old thumbnails."), open=True)
             update_thumbnails(page_ctx=e.page, grid_control=thumbnails_grid_ref.current, force_refresh=True) # Force refresh to update image sources
             e.page.update()
 
@@ -717,6 +826,10 @@ async def on_dataset_dropdown_change(
         processed_progress_bar.visible = False
 
     selected_dataset["value"] = ev.control.value
+    
+    # Determine dataset type and store it globally
+    base_dir, dataset_type = _get_dataset_base_dir(selected_dataset["value"])
+    DATASETS_TYPE["value"] = dataset_type
 
     # Load and update config fields based on selected dataset
     bucket_val, model_val, trigger_word_val = load_dataset_config(selected_dataset["value"])
@@ -777,7 +890,17 @@ def on_add_captions_click_with_model(e: ft.ControlEvent,
             e.page.update()
         return
 
-    dataset_folder_path = os.path.abspath(os.path.join(settings.DATASETS_DIR, current_dataset_name))
+    # Determine dataset type using the global variable
+    dataset_type = DATASETS_TYPE["value"]
+    
+    # Remove the ' (img)' suffix if present for the actual folder name
+    clean_dataset_name = current_dataset_name.replace(' (img)', '')
+    
+    if dataset_type == "image":
+        dataset_folder_path = os.path.abspath(os.path.join(settings.DATASETS_IMG_DIR, clean_dataset_name))
+    else: # dataset_type == "video"
+        dataset_folder_path = os.path.abspath(os.path.join(settings.DATASETS_DIR, clean_dataset_name))
+    
     output_json_path = os.path.join(dataset_folder_path, "captions.json")
 
     # --- Build the command string using the dedicated helper function ---
@@ -906,7 +1029,8 @@ def on_delete_captions_click(e: ft.ControlEvent, thumbnails_grid_control: ft.Gri
             page_for_dialog.update()
         return
 
-    captions_file_path = os.path.join(settings.DATASETS_DIR, current_dataset_name, "captions.json")
+    base_dir, _ = _get_dataset_base_dir(current_dataset_name)
+    captions_file_path = os.path.join(base_dir, current_dataset_name.replace('(img) ', '').replace(' (img)', ''), "captions.json")
     if not os.path.exists(captions_file_path):
         if page_for_dialog:
             page_for_dialog.snack_bar = ft.SnackBar(content=ft.Text(f"Captions for '{current_dataset_name}' not found."), open=True)
@@ -961,8 +1085,19 @@ def on_preprocess_dataset_click(e: ft.ControlEvent,
             e.page.update()
         return
 
-    input_captions_json_path = os.path.abspath(os.path.join(settings.DATASETS_DIR, current_dataset_name, "captions.json"))
-    preprocess_output_dir = os.path.abspath(os.path.join(settings.DATASETS_DIR, current_dataset_name, "preprocessed_data"))
+    # Clean the dataset name by removing any image markers (both old and new formats)
+    clean_dataset_name = current_dataset_name.replace('(img) ', '').replace(' (img)', '')
+
+    # Determine dataset type using the global variable
+    dataset_type = DATASETS_TYPE["value"]
+    
+    if dataset_type == "image":
+        dataset_dir = settings.DATASETS_IMG_DIR
+    else: # dataset_type == "video"
+        dataset_dir = settings.DATASETS_DIR
+    
+    input_captions_json_path = os.path.abspath(os.path.join(dataset_dir, clean_dataset_name, "captions.json"))
+    preprocess_output_dir = os.path.abspath(os.path.join(dataset_dir, clean_dataset_name, "preprocessed_data"))
 
     # Check if captions file exists
     if not os.path.exists(input_captions_json_path):
@@ -1047,7 +1182,28 @@ def on_preprocess_dataset_click(e: ft.ControlEvent,
 # GUI Update/Utility Functions (Functions that update the UI state)
 # ======================================================================================
 
+# Global dictionary to track temporary thumbnail paths and their creation times
+_temp_thumbnails = {}
+
+def cleanup_old_temp_thumbnails(thumb_dir: str, max_age_seconds: int = 3600):
+    """Clean up temporary thumbnails older than max_age_seconds"""
+    current_time = time.time()
+    if not os.path.exists(thumb_dir):
+        return
+        
+    for filename in os.listdir(thumb_dir):
+        if filename.endswith('.tmp_'):
+            try:
+                file_path = os.path.join(thumb_dir, filename)
+                file_mtime = os.path.getmtime(file_path)
+                if current_time - file_mtime > max_age_seconds:
+                    os.remove(file_path)
+            except Exception as e:
+                print(f"Error cleaning up old temp thumbnail {filename}: {e}")
+
 def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None, force_refresh: bool = False):
+    global _temp_thumbnails
+    
     if not grid_control:
         return
 
@@ -1055,12 +1211,35 @@ def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None
     grid_control.controls.clear()
     processed_map = load_processed_map(current_selection) if current_selection else None
 
+    # Define image extensions to check
+    image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp']
+
+    # New helper function for on_click logic
+    def _handle_thumbnail_click(e_click, vp, current_grid, page_ctx):
+        file_ext = os.path.splitext(vp)[1].lower()
+        if file_ext in image_extensions:
+            if page_ctx:
+                open_image_captions_dialog(
+                    page_ctx,
+                    vp,
+                    video_files_list["value"],
+                    on_caption_updated_callback=lambda _: update_thumbnails(page_ctx=page_ctx, grid_control=current_grid, force_refresh=True)
+                )
+        else: # It's a video
+            if page_ctx:
+                open_video_captions_dialog(
+                    page_ctx,
+                    vp,
+                    video_files_list["value"],
+                    on_caption_updated_callback=lambda: update_thumbnails(page_ctx=page_ctx, grid_control=current_grid, force_refresh=True)
+                )
+
     if not current_selection:
         folders_exist = get_dataset_folders() is not None and len(get_dataset_folders()) > 0
         grid_control.controls.append(ft.Text("Select a dataset to view videos." if folders_exist else "No datasets found."))
     else:
         # Fetch video and thumbnail information
-        thumbnail_paths_map, video_info = get_videos_and_thumbnails(current_selection)
+        thumbnail_paths_map, video_info = get_videos_and_thumbnails(current_selection, DATASETS_TYPE["value"])
         video_files_list["value"] = list(thumbnail_paths_map.keys()) # Update global list
         dataset_captions = load_dataset_captions(current_selection)
 
@@ -1075,18 +1254,8 @@ def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None
                 cap_val, cap_color = ("yes", ft.Colors.GREEN) if has_caption else ("no", ft.Colors.RED)
                 proc_val, proc_color = ("yes", ft.Colors.GREEN) if processed_map and video_name in processed_map else ("no", ft.Colors.RED)
 
-                # Use a temporary file path for the image source if force_refresh is true and thumbnail exists
+                # Always use the original thumbnail path - temporary thumbnail creation is disabled
                 image_src = thumb_path
-                temp_thumb_path = None
-                if force_refresh and thumb_path and os.path.exists(thumb_path):
-                     try:
-                        temp_thumb_name = f"{os.path.splitext(os.path.basename(thumb_path))[0]}.tmp_{int(__import__('time').time())}{os.path.splitext(thumb_path)[1]}"
-                        temp_thumb_path = os.path.join(os.path.dirname(thumb_path), temp_thumb_name)
-                        __import__('shutil').copy2(thumb_path, temp_thumb_path)
-                        image_src = temp_thumb_path
-                     except Exception as e:
-                         print(f"Error creating temp thumbnail for {thumb_path}: {e}") # Debug
-                         image_src = thumb_path # Fallback if temp creation fails
 
                 grid_control.controls.append(
                     ft.Container(
@@ -1108,14 +1277,7 @@ def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None
                             ft.Text(f"[{width}x{height} - {frames} frames]", size=10, color=ft.Colors.GREY_500),
                         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, tight=True),
                         data=video_path, # Store original video path in data
-                        on_click=lambda e_click, vp=video_path, current_grid=grid_control, page_ctx=page_ctx: (
-                             open_video_captions_dialog( # Pass page_ctx explicitly
-                                 page_ctx,
-                                 vp,
-                                 video_files_list["value"],
-                                 on_caption_updated_callback=lambda: update_thumbnails(page_ctx=page_ctx, grid_control=current_grid, force_refresh=True) # Force refresh on caption update
-                             ) if page_ctx else None
-                         ),
+                        on_click=lambda e_click, vp=video_path, current_grid=grid_control, page_ctx=page_ctx: _handle_thumbnail_click(e_click, vp, current_grid, page_ctx),
                         tooltip=video_name,
                         width=settings.THUMB_TARGET_W + 10,
                         height=settings.THUMB_TARGET_H + 45, # Adjust height to fit text
@@ -1129,16 +1291,20 @@ def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None
     if grid_control and grid_control.page:
         grid_control.update()
 
-    # Clean up temporary thumbnail files (basic approach - might need more robust handling)
+    # Clean up old temporary thumbnails if we're doing a refresh
     if force_refresh and current_selection:
-        dataset_folder_path = os.path.abspath(os.path.join(settings.DATASETS_DIR, current_selection))
-        for file_name in os.listdir(dataset_folder_path):
-            if file_name.endswith('.jpg') and '.tmp_' in file_name:
-                try:
-                    os.remove(os.path.join(dataset_folder_path, file_name))
-                    #print(f"Cleaned up temp thumbnail: {file_name}") # Debug
-                except Exception as e:
-                    print(f"Error cleaning up temp thumbnail {file_name}: {e}") # Debug
+        # Use the global DATASETS_TYPE to determine the base directory
+        dataset_type = DATASETS_TYPE["value"]
+        base_dir = settings.DATASETS_IMG_DIR if dataset_type == "image" else settings.DATASETS_DIR
+        dataset_folder_path = os.path.abspath(os.path.join(base_dir, current_selection.replace('(img) ', '').replace(' (img)', '')))
+        
+        # Clean up any old temp thumbnails in this directory
+        cleanup_old_temp_thumbnails(dataset_folder_path)
+        
+        # Also clean up any thumbnails in the thumbnails directory
+        thumb_dir = os.path.join(settings.THUMBNAILS_IMG_BASE_DIR if dataset_type == "image" else settings.THUMBNAILS_BASE_DIR, current_selection.replace('(img) ', '').replace(' (img)', ''))
+        if os.path.exists(thumb_dir):
+            cleanup_old_temp_thumbnails(thumb_dir)
 
 
 def update_dataset_dropdown(
@@ -1148,9 +1314,8 @@ def update_dataset_dropdown(
     delete_button: ft.ElevatedButton # Pass delete button
 ):
     folders = get_dataset_folders()
-    folder_names = list(folders.keys()) if folders else []
-
-    current_dataset_dropdown.options = [ft.dropdown.Option(name) for name in folder_names]
+    # Use dictionary items to get both value (display name) and key (actual folder name)
+    current_dataset_dropdown.options = [ft.dropdown.Option(key=name, text=display_name) for name, display_name in folders.items()] if folders else []
     current_dataset_dropdown.value = None # Clear selection
     selected_dataset["value"] = None # Clear global state
 
@@ -1196,16 +1361,15 @@ def reload_current_dataset(
         processed_progress_bar.visible = False
 
     folders = get_dataset_folders()
-    folder_names = list(folders.keys()) if folders else []
-
-    current_dataset_dropdown.options = [ft.dropdown.Option(name) for name in folder_names]
-    current_dataset_dropdown.disabled = len(folder_names) == 0
+    # Use dictionary items to get both value (display name) and key (actual folder name)
+    current_dataset_dropdown.options = [ft.dropdown.Option(key=name, text=display_name) for name, display_name in folders.items()] if folders else []
+    current_dataset_dropdown.disabled = len(folders) == 0
 
     prev_selected_name = selected_dataset.get("value")
 
-    if prev_selected_name and prev_selected_name in folder_names:
+    if prev_selected_name and prev_selected_name in folders:
         # If previously selected dataset still exists, keep it selected
-        current_dataset_dropdown.value = prev_selected_name
+        current_dataset_dropdown.value = prev_selected_name # Set value to the key (actual folder name)
         selected_dataset["value"] = prev_selected_name
         bucket_val, model_val, trigger_word_val = load_dataset_config(prev_selected_name)
         if bucket_size_textfield: bucket_size_textfield.value = bucket_val
@@ -1362,17 +1526,17 @@ def _build_latent_test_section(update_thumbnails_func):
         create_textfield(label="Find",value="",expand=True, ref=find_text_field_ref),
         create_textfield(label="Replace", value="", expand=True, ref=replace_text_field_ref),
         create_styled_button("Find and Replace", on_click=lambda e: e.page.run_task(find_and_replace_in_captions,
-            e, selected_dataset, find_text_field_ref, replace_text_field_ref, update_thumbnails_func, thumbnails_grid_ref
+            e, selected_dataset, DATASETS_TYPE["value"], find_text_field_ref, replace_text_field_ref, update_thumbnails_func, thumbnails_grid_ref
         ))
     ])
     prefix_suffix_replace=ft.Column([
         create_textfield(label="Text",value="",expand=True, ref=affix_text_field_ref),
         ft.ResponsiveRow([
             create_styled_button("Add prefix",col=6, on_click=lambda e: e.page.run_task(apply_affix_from_textfield,
-                e, "prefix", selected_dataset, update_thumbnails_func, thumbnails_grid_ref, affix_text_field_ref
+                e, "prefix", selected_dataset, DATASETS_TYPE["value"], update_thumbnails_func, thumbnails_grid_ref, affix_text_field_ref
             )),
             create_styled_button("Add suffix",col=6, on_click=lambda e: e.page.run_task(apply_affix_from_textfield,
-                e, "suffix", selected_dataset, update_thumbnails_func, thumbnails_grid_ref, affix_text_field_ref
+                e, "suffix", selected_dataset, DATASETS_TYPE["value"], update_thumbnails_func, thumbnails_grid_ref, affix_text_field_ref
             ))
         ])
     ])
@@ -1465,8 +1629,11 @@ def dataset_tab_layout(page=None):
     )
 
     update_button_control = ft.IconButton(
-        icon=ft.Icons.REFRESH, tooltip="Update dataset list",
-        style=ft.ButtonStyle(padding=ft.padding.symmetric(horizontal=8)), icon_size=20
+        icon=ft.Icons.REFRESH, 
+        tooltip="Update dataset list and refresh thumbnails",
+        style=ft.ButtonStyle(padding=ft.padding.symmetric(horizontal=8)), 
+        icon_size=20,
+        on_click=lambda e: update_thumbnails(page_ctx=e.page, grid_control=thumbnails_grid_control, force_refresh=True)
     )
 
     # Captioning specific controls
@@ -1553,7 +1720,7 @@ def dataset_tab_layout(page=None):
         tooltip="Change fps",
         expand=True,
         on_click=lambda e: e.page.run_task(on_change_fps_click,
-            e, selected_dataset, change_fps_textfield_ref, thumbnails_grid_ref, update_thumbnails_func, settings
+            e, selected_dataset, DATASETS_TYPE["value"], change_fps_textfield_ref, thumbnails_grid_ref, update_thumbnails_func, settings
         ),
         button_style=BTN_STYLE2
     )
@@ -1569,7 +1736,7 @@ def dataset_tab_layout(page=None):
         tooltip="Rename files",
         expand=True,
         on_click=lambda e: e.page.run_task(on_rename_files_click,
-            e, selected_dataset, rename_textfield, thumbnails_grid_ref, update_thumbnails_func, settings
+            e, selected_dataset, DATASETS_TYPE["value"], rename_textfield, thumbnails_grid_ref, update_thumbnails_func, settings
         ),
         button_style=BTN_STYLE2
     )

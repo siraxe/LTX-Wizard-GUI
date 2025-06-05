@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import json
 from .._styles import create_textfield, create_dropdown # Import helper functions
-from ..tab_dataset_view import get_dataset_folders  # Reuse the helper
+from ..tab_dataset_view import get_dataset_folders, _get_dataset_base_dir  # Reuse the helper
 from settings import settings
 
 
@@ -17,28 +17,45 @@ def load_dataset_summary(dataset):
     """
     if not dataset:
         return {
-            "Videos": 0,
+            "Files": 0,
             "Captioned": 0,
             "Processed": 0,
-            "Total frames": 0
+            "Total frames/images": 0
         }
-    dataset_dir = os.path.join("workspace", "datasets", dataset)
-    info_path = os.path.join(dataset_dir, "info.json")
-    captions_path = os.path.join(dataset_dir, "captions.json")
-    processed_path = os.path.join(dataset_dir, "preprocessed_data", "processed.json")
-    num_videos = 0
+    
+    base_dir, dataset_type = _get_dataset_base_dir(dataset)
+    clean_dataset_name = dataset.replace('(img) ', '').replace(' (img)', '')
+    dataset_full_path = os.path.join(base_dir, clean_dataset_name)
+
+    info_path = os.path.join(dataset_full_path, "info.json")
+    captions_path = os.path.join(dataset_full_path, "captions.json")
+    processed_path = os.path.join(dataset_full_path, "preprocessed_data", "processed.json")
+    
+    num_files = 0
     num_captioned = 0
     num_processed = 0
-    total_frames = 0
-    video_files = [f for ext in settings.VIDEO_EXTENSIONS for f in os.listdir(dataset_dir) if f.lower().endswith(ext)]
-    num_videos = len(video_files)
+    total_frames_or_images = 0
+
+    if dataset_type == "image":
+        file_extensions = settings.IMAGE_EXTENSIONS
+    else:
+        file_extensions = settings.VIDEO_EXTENSIONS
+
+    media_files = [f for ext in file_extensions for f in os.listdir(dataset_full_path) if f.lower().endswith(ext)]
+    num_files = len(media_files)
+
     if os.path.exists(info_path):
         try:
             with open(info_path, 'r') as f:
                 info = json.load(f)
-            total_frames = sum(v.get("frames", 0) for v in info.values() if isinstance(v, dict))
+            # Sum frames for videos, or count images for image datasets
+            if dataset_type == "video":
+                total_frames_or_images = sum(v.get("frames", 0) for v in info.values() if isinstance(v, dict))
+            else: # image dataset
+                total_frames_or_images = num_files # Each image is a "frame" in this context
         except Exception:
             pass
+    
     if os.path.exists(captions_path):
         try:
             with open(captions_path, 'r', encoding='utf-8') as f:
@@ -46,6 +63,7 @@ def load_dataset_summary(dataset):
                 num_captioned = sum(1 for entry in captions if entry.get("caption", "").strip())
         except Exception:
             pass
+    
     if os.path.exists(processed_path):
         try:
             with open(processed_path, 'r', encoding='utf-8') as f:
@@ -53,11 +71,12 @@ def load_dataset_summary(dataset):
             num_processed = len(processed_map)
         except Exception:
             num_processed = 0
+    
     return {
-        "Videos": num_videos,
+        "Files": num_files,
         "Captioned": num_captioned,
         "Processed": num_processed,
-        "Total frames": total_frames
+        "Total frames/images": total_frames_or_images
     }
 
 def generate_collage(thumbnails_dir, summary_path, target_w=settings.COLLAGE_WIDTH, target_h=settings.COLLAGE_HEIGHT):
@@ -155,7 +174,14 @@ def build_training_dataset_page_content():
         dataset_dropdown_ref.current = dataset_dropdown
         dataset_dropdown.disabled = len(folders) == 0
         def on_dataset_change(e):
-            selected_dataset["value"] = e.control.value if e.control.value else None
+            folders = get_dataset_folders() # Get the folders mapping (clean_name: display_name)
+            selected_key = e.control.value # This is the clean name (e.g., "capped")
+            
+            if selected_key:
+                # Look up the display name using the key
+                selected_dataset["value"] = folders.get(selected_key, selected_key) # Use display name
+            else:
+                selected_dataset["value"] = None
             update_summary_row()
         dataset_dropdown.on_change = on_dataset_change
         update_button = ft.IconButton(
@@ -234,17 +260,28 @@ def build_training_dataset_page_content():
                 ft.Text("Select a dataset", key="placeholder_select_dataset")
             )
         else:
-            # This is a valid dataset name
-            thumbnails_dir = os.path.join("workspace", "thumbnails", current_selected_dataset)
+            # Determine dataset type and base directory for thumbnails
+            base_dir, dataset_type = _get_dataset_base_dir(current_selected_dataset)
+            clean_dataset_name = current_selected_dataset.replace('(img) ', '').replace(' (img)', '')
+            
+            if dataset_type == "image":
+                thumbnails_base_dir = settings.THUMBNAILS_IMG_BASE_DIR
+            else:
+                thumbnails_base_dir = settings.THUMBNAILS_BASE_DIR
+
+            thumbnails_dir = os.path.join(thumbnails_base_dir, clean_dataset_name)
             summary_path = os.path.join(thumbnails_dir, "summary.jpg")
+            
             if not os.path.exists(thumbnails_dir):
                 os.makedirs(thumbnails_dir, exist_ok=True)
+            
             if not os.path.exists(thumbnails_dir):
                 summary_text_column.controls.append(ft.Text(f"Thumbnails directory for {current_selected_dataset} not found or couldn't be created.", size=12))
             else:
                 # Try to generate summary if it doesn't exist
                 if not os.path.exists(summary_path):
                     generate_collage(thumbnails_dir, summary_path)
+                
                 if os.path.exists(summary_path):
                     summary_img_container.content = ft.Image(
                         src=summary_path,
@@ -252,9 +289,13 @@ def build_training_dataset_page_content():
                         height=settings.COLLAGE_HEIGHT,
                         fit=ft.ImageFit.CONTAIN
                     )
+                
                 summary_data = load_dataset_summary(current_selected_dataset)
-                if not summary_data.get("Videos") and not os.path.exists(summary_path):
-                    summary_text_column.controls.append(ft.Text(f"No videos or summary image found for {current_selected_dataset}.", size=12))
+                
+                # Check for "Files" instead of "Videos"
+                if not summary_data.get("Files") and not os.path.exists(summary_path):
+                    summary_text_column.controls.append(ft.Text(f"No files or summary image found for {current_selected_dataset}.", size=12))
+                
                 summary_text_column.controls.append(ft.Text("Dataset summary", weight=ft.FontWeight.BOLD, size=14))
                 for k, v in summary_data.items():
                     summary_text_column.controls.append(ft.Text(f"{k} - {v}", size=12))
@@ -297,10 +338,12 @@ def build_training_dataset_page_content():
                     dropdown.update()
                     if page_ctx: # If page context is available, try a broader update
                         page_ctx.update()
-        elif dataset_name in folders: # dataset_name is not None and is valid
-            selected_dataset["value"] = dataset_name
+        elif dataset_name in folders: # dataset_name is not None and is valid (this is the clean name)
+            # Store the display name (e.g., "(img) capped") in selected_dataset["value"]
+            selected_dataset["value"] = folders[dataset_name] 
             if dropdown:
-                dropdown.value = str(dataset_name)
+                # The dropdown's value should still be the key (clean name) for it to display correctly
+                dropdown.value = str(dataset_name) 
                 if dropdown.page: # Check if control is on the page
                     dropdown.update()
                     if page_ctx: # If page context is available, try a broader update

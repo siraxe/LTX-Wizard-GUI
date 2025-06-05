@@ -112,7 +112,8 @@ class TopBarUtils:
 
     @staticmethod
     def _save_and_scale_image(source_image_path: str, video_dims_tuple: tuple, dataset_name: str, 
-                            target_filename: str, page: ft.Page = None, target_control: str = None,
+                            target_filename: str, dataset_type: str = "video", # Added dataset_type
+                            page: ft.Page = None, target_control: str = None,
                             image_display_c1=None, image_display_c2=None):
         if not source_image_path or not dataset_name:
             logger.warning("_save_and_scale_image: Missing source_image_path or dataset_name.")
@@ -127,7 +128,9 @@ class TopBarUtils:
             logger.error(f"Error opening image {source_image_path} in _save_and_scale_image: {e}")
             return None
 
-        dataset_sample_images_dir = Path("workspace") / "datasets" / dataset_name / "sample_images"
+        # Determine the base directory for datasets based on dataset_type
+        base_datasets_dir = "datasets_img" if dataset_type == "image" else "datasets"
+        dataset_sample_images_dir = Path("workspace") / base_datasets_dir / dataset_name / "sample_images"
         dataset_sample_images_dir.mkdir(parents=True, exist_ok=True)
         target_path = dataset_sample_images_dir / target_filename
 
@@ -201,12 +204,24 @@ class TopBarUtils:
         dataset_path = None
         num_workers = 2 
         selected_dataset_name_for_images = None
+        dataset_type_for_yaml = "video" # Default to video
         
         if dataset_controls and hasattr(dataset_controls, 'get_selected_dataset'):
-            selected_dataset_value = dataset_controls.get_selected_dataset()
-            if selected_dataset_value:
-                dataset_path = os.path.join('workspace', 'datasets', selected_dataset_value, 'preprocessed_data').replace('\\', '/')
-                selected_dataset_name_for_images = selected_dataset_value
+            selected_display_name = dataset_controls.get_selected_dataset()
+            if selected_display_name:
+                # Check if display name starts with (img) prefix
+                is_img_dataset = selected_display_name.startswith('(img) ')
+                # Clean the dataset name by removing the image marker
+                clean_dataset_name = selected_display_name.replace('(img) ', '')
+                
+                if is_img_dataset:
+                    # Use datasets_img directory for image datasets
+                    dataset_path = os.path.join('workspace', 'datasets_img', clean_dataset_name, 'preprocessed_data').replace('\\', '/')
+                    dataset_type_for_yaml = "image"
+                else:
+                    dataset_path = os.path.join('workspace', 'datasets', clean_dataset_name, 'preprocessed_data').replace('\\', '/')
+                    dataset_type_for_yaml = "video"
+                selected_dataset_name_for_images = clean_dataset_name
                 
         if dataset_controls and hasattr(dataset_controls, 'get_num_workers'):
             try:
@@ -267,6 +282,7 @@ class TopBarUtils:
                     video_dims_tuple=video_dims_tuple_for_scaling, 
                     dataset_name=selected_dataset_name_for_images, 
                     target_filename="img1.png",
+                    dataset_type=dataset_type_for_yaml, # Pass dataset_type
                     page=page, target_control='c1', # Pass target_control
                     image_display_c1=image_display_c1, image_display_c2=image_display_c2 # Pass displays
                 )
@@ -278,6 +294,7 @@ class TopBarUtils:
                     video_dims_tuple=video_dims_tuple_for_scaling, 
                     dataset_name=selected_dataset_name_for_images, 
                     target_filename="img2.png",
+                    dataset_type=dataset_type_for_yaml, # Pass dataset_type
                     page=page, target_control='c2', # Pass target_control
                     image_display_c1=image_display_c1, image_display_c2=image_display_c2 # Pass displays
                 )
@@ -322,7 +339,11 @@ class TopBarUtils:
                 'compile_with_inductor': bool(config.get('Compile with Inductor', False)),
                 'compilation_mode': config.get('Compilation Mode'),
             },
-            'data': { 'preprocessed_data_root': dataset_path, 'num_dataloader_workers': int(num_workers), },
+            'data': { 
+                'preprocessed_data_root': dataset_path, 
+                'num_dataloader_workers': int(num_workers),
+                'dataset_type': dataset_type_for_yaml, # Add dataset_type here
+            },
             'validation': {
                 'prompts': prompt_list, 'negative_prompt': sampling.get('Negative Prompt', ''),
                 'video_dims': video_dims_for_yaml, 'seed': int(sampling.get('Seed (Validation)', 42)),
@@ -748,4 +769,3 @@ class TopBarUtils:
             items.append(ft.MenuItemButton(content=ft.Text(display_name, size=text_size, tooltip=f_path), 
                                           on_click=on_click_handler, data=f_path))
         return items
-

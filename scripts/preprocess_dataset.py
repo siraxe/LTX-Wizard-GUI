@@ -412,7 +412,7 @@ def _parse_resolution_buckets(resolution_buckets_str: str) -> list[tuple[int, in
                 param_hint="resolution-buckets",
             )
 
-        if f % VAE_TEMPORAL_FACTOR != 1:
+        if (f - 1) % VAE_TEMPORAL_FACTOR != 0:
             raise typer.BadParameter(
                 f"Number of frames must be a multiple of {VAE_TEMPORAL_FACTOR} plus 1, got {f}",
                 param_hint="resolution-buckets",

@@ -4,13 +4,13 @@
 
 from ui.utils.utils_top_menu import TopBarUtils
 
-# --- Video Player Hotkey Logic ---
-AUTO_VIDEO_PLAYBACK = True  # Set to True to auto-play video on open/switch
+# --- Global Hotkey Logic ---
+AUTO_PLAYBACK = True  # Set to True to auto-play media on open/switch
 
-# --- Video Player Hotkey Keybindings ---
-VIDEO_PLAY_PAUSE_KEY = " "  # Spacebar
-VIDEO_NEXT_KEY = "]"
-VIDEO_PREV_KEY = "["
+# --- Global Hotkey Keybindings ---
+PLAY_PAUSE_KEY = " "  # Spacebar
+NEXT_KEY = "]"
+PREV_KEY = "["
 
 def global_hotkey_handler(page, e):
     """
@@ -18,7 +18,10 @@ def global_hotkey_handler(page, e):
     - Esc: Close dialog
     - Ctrl+S, Ctrl+Shift+S, Ctrl+O, Ctrl+F: Menu hotkeys
     """
-    # If the video dialog is open and has a handler, call it
+    # If a media dialog is open and has a handler, call it
+    if getattr(page, 'image_dialog_open', False) and getattr(page, 'image_dialog_hotkey_handler', None):
+        page.image_dialog_hotkey_handler(e)
+        return
     if getattr(page, 'video_dialog_open', False) and getattr(page, 'video_dialog_hotkey_handler', None):
         page.video_dialog_hotkey_handler(e)
         return
