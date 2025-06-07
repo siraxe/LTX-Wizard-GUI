@@ -1,5 +1,6 @@
 # image_player_dialog.py
 import flet as ft
+import base64 # Added import for base64
 import os
 from ui._styles import create_textfield, create_styled_button, IMAGE_PLAYER_DIALOG_WIDTH, IMAGE_PLAYER_DIALOG_HEIGHT, BTN_STYLE2
 from ui.flet_hotkeys import AUTO_PLAYBACK, NEXT_KEY, PREV_KEY
@@ -9,6 +10,7 @@ from .image_dialog_class import image_dialog_state
 from . import image_player_utils as ipu
 from . import image_editor
 from .batch_crop_warning import show_batch_crop_warning_dialog
+from .image_player_utils import calculate_contained_image_dimensions, get_image_metadata
 
 MIN_OVERLAY_SIZE = 20
 
@@ -110,7 +112,38 @@ def build_crop_controls_row(
     returnBox = ft.ResponsiveRow(
         controls=[crop_column_restored],
         spacing=10,
-        vertical_alignment=ft.CrossAxisAlignment.START
+        vertical_alignment=ft.CrossAxisAlignment.START,
+        col=6
+    )
+    return returnBox
+
+def build_other_controls_row(
+    page: ft.Page,
+    current_image_path: str,
+    # Placeholder actions for now
+    on_flip_image_action: Callable,
+    on_rotate_plus_90_action: Callable,
+    on_rotate_minus_90_action: Callable):
+
+    flip_button = create_styled_button(text="Flip Image", on_click=on_flip_image_action, col=4, button_style=BTN_STYLE2)
+    rotate_plus_90_button = create_styled_button(text="+90", on_click=on_rotate_plus_90_action, col=4, button_style=BTN_STYLE2)
+    rotate_minus_90_button = create_styled_button(text="-90", on_click=on_rotate_minus_90_action, col=4, button_style=BTN_STYLE2)
+
+    other_buttons_row_internal = ft.ResponsiveRow(controls=[flip_button, rotate_plus_90_button, rotate_minus_90_button], spacing=3, expand=True)
+
+    other_column = ft.Column(
+        controls=[
+            ft.ResponsiveRow([other_buttons_row_internal]),
+        ],
+        spacing=3,
+        col={'md': 12},
+    )
+
+    returnBox = ft.ResponsiveRow(
+        controls=[other_column],
+        spacing=10,
+        vertical_alignment=ft.CrossAxisAlignment.START,
+        col=6
     )
     return returnBox
 
@@ -272,10 +305,6 @@ def build_image_display(image_path: str) -> Tuple[ft.Stack, ft.Image]:
     
     return image_stack, image_control
 
-import time
-import base64 # Added import for base64
-
-from .image_player_utils import calculate_contained_image_dimensions, get_image_metadata
 
 def update_image_player_source(image_control: ft.Image, new_image_path: str):
     """
@@ -528,7 +557,7 @@ def create_image_player_with_captions_content(page: ft.Page, image_path: str, im
         image_dialog_state.current_image_list_for_dialog, image_dialog_state.active_on_caption_updated_callback
     )
 
-    editing_controls_row = build_crop_controls_row(
+    crop_controls_row = build_crop_controls_row(
         page=page, current_image_path=image_path,
         on_crop_dimensions_action=on_crop_dim_action,
         on_crop_all_action=on_crop_all_act,
@@ -537,13 +566,42 @@ def create_image_player_with_captions_content(page: ft.Page, image_path: str, im
         on_toggle_crop_editor_visibility=toggle_crop_editor_overlay_visibility,
         image_list=image_list,
         on_caption_updated_callback=on_caption_updated_callback)
+    
+    on_flip_image_act = lambda e: page.run_thread(
+        image_editor.handle_flip_image,
+        page, image_dialog_state.current_image_path_for_dialog,
+        image_dialog_state.current_image_list_for_dialog,
+        image_dialog_state.active_on_caption_updated_callback
+    )
+    on_rotate_plus_90_act = lambda e: page.run_thread(
+        image_editor.handle_rotate_image,
+        page, image_dialog_state.current_image_path_for_dialog,
+        image_dialog_state.current_image_list_for_dialog,
+        image_dialog_state.active_on_caption_updated_callback,
+        90
+    )
+    on_rotate_minus_90_act = lambda e: page.run_thread(
+        image_editor.handle_rotate_image,
+        page, image_dialog_state.current_image_path_for_dialog,
+        image_dialog_state.current_image_list_for_dialog,
+        image_dialog_state.active_on_caption_updated_callback,
+        -90
+    )
+
+    other_control_row = build_other_controls_row(
+        page=page, current_image_path=image_path,
+        on_flip_image_action=on_flip_image_act,
+        on_rotate_plus_90_action=on_rotate_plus_90_act,
+        on_rotate_minus_90_action=on_rotate_minus_90_act
+    )
+
     image_dialog_state.active_message_container_instance = build_message_container(content=message_ui_element)
 
     content_column = ft.Column(
         controls=[
             ft.Row([image_player_stack], alignment=ft.MainAxisAlignment.CENTER),
             ft.ResponsiveRow([image_dialog_state.active_caption_field_instance, image_dialog_state.active_caption_neg_field_instance], spacing=10),
-            editing_controls_row,
+            ft.ResponsiveRow([crop_controls_row, other_control_row]),
             ft.Row([image_dialog_state.active_message_container_instance], alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.CENTER)
         ],
         spacing=10, tight=True, scroll=ft.ScrollMode.ADAPTIVE

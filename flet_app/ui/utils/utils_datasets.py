@@ -113,6 +113,8 @@ def get_dataset_folders():
     # Add folders from DATASETS_DIR
     if os.path.exists(settings.DATASETS_DIR):
         for name in os.listdir(settings.DATASETS_DIR):
+            if name == "_bak": # Ignore _bak folder
+                continue
             folder_path = os.path.join(settings.DATASETS_DIR, name)
             if os.path.isdir(folder_path):
                 # Only add if not already present (shouldn't happen as we're iterating DATASETS_DIR first)
@@ -122,6 +124,8 @@ def get_dataset_folders():
     # Add folders from DATASETS_IMG_DIR
     if os.path.exists(settings.DATASETS_IMG_DIR):
         for name in os.listdir(settings.DATASETS_IMG_DIR):
+            if name == "_bak": # Ignore _bak folder
+                continue
             folder_path = os.path.join(settings.DATASETS_IMG_DIR, name)
             if os.path.isdir(folder_path):
                 # Always add with (img) prefix for DATASETS_IMG_DIR

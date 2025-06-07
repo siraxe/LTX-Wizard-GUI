@@ -2,6 +2,7 @@ import flet as ft
 import os
 import shutil
 from typing import Optional, List, Callable 
+from PIL import Image # Added import for Pillow
 
 from . import image_player_dialog 
 from .image_dialog_class import image_dialog_state
@@ -203,3 +204,37 @@ def handle_crop_all_images(
         
         if not dialog_refreshed_for_current_image:
             page.update()
+
+def handle_flip_image(page: ft.Page, current_image_path: str, image_list: Optional[List[str]] = None, on_caption_updated_callback: Optional[Callable] = None):
+    if not current_image_path or not os.path.exists(current_image_path):
+        if page: page.snack_bar = ft.SnackBar(ft.Text("Error: Invalid image path for flipping."), open=True); page.update()
+        return
+
+    try:
+        img = Image.open(current_image_path)
+        flipped_img = img.transpose(Image.FLIP_LEFT_RIGHT)
+        if flipped_img.mode == 'RGBA':
+            flipped_img = flipped_img.convert('RGB')
+        flipped_img.save(current_image_path)
+        _generic_image_operation_ui_update(page, current_image_path, image_list, on_caption_updated_callback, "Image flipped successfully.")
+    except Exception as e:
+        msg = f"Error flipping image: {e}"
+        if page: page.snack_bar = ft.SnackBar(ft.Text(msg), open=True); page.update()
+        print(msg)
+
+def handle_rotate_image(page: ft.Page, current_image_path: str, image_list: Optional[List[str]] = None, on_caption_updated_callback: Optional[Callable] = None, degrees: int = 90):
+    if not current_image_path or not os.path.exists(current_image_path):
+        if page: page.snack_bar = ft.SnackBar(ft.Text("Error: Invalid image path for rotation."), open=True); page.update()
+        return
+
+    try:
+        img = Image.open(current_image_path)
+        rotated_img = img.rotate(degrees, expand=True)
+        if rotated_img.mode == 'RGBA':
+            rotated_img = rotated_img.convert('RGB')
+        rotated_img.save(current_image_path)
+        _generic_image_operation_ui_update(page, current_image_path, image_list, on_caption_updated_callback, f"Image rotated by {degrees} degrees successfully.")
+    except Exception as e:
+        msg = f"Error rotating image: {e}"
+        if page: page.snack_bar = ft.SnackBar(ft.Text(msg), open=True); page.update()
+        print(msg)
