@@ -1,5 +1,6 @@
 import flet as ft
 from ui_popups.about import open_about_dialog
+from settings_popup import open_settings_dialog
 from ui.utils.utils_top_menu import TopBarUtils
 
 # =====================
@@ -16,6 +17,8 @@ def handle_menu_item_click(page: ft.Page, e):
         clicked_text = e.control.content.value
         if clicked_text == "About":
             open_about_dialog(page)
+        elif clicked_text == "Settings":
+            open_settings_dialog(page)
         elif clicked_text == "Save as":
             handle_save_as(page)
         elif clicked_text == "Save":
@@ -77,7 +80,7 @@ def build_file_menu(on_menu_item_click, page, text_size):
         ]
     )
 
-def build_edit_menu(page, text_size):
+def build_edit_menu(page, text_size,on_menu_item_click):
     """Build the Edit menu and its submenu controls."""
     return ft.SubmenuButton(
         content=ft.Container(
@@ -89,6 +92,10 @@ def build_edit_menu(page, text_size):
             ft.MenuItemButton(
                 content=ft.Text("Load Default", size=text_size),
                 on_click=lambda e: handle_load_default(page)
+            ),
+            ft.MenuItemButton(
+                content=ft.Text("Settings", size=text_size),
+                on_click=on_menu_item_click
             ),
         ]
     )
@@ -118,7 +125,7 @@ def build_menu_bar(page: ft.Page, on_menu_item_click, text_size=10):
         ),
         controls=[
             build_file_menu(on_menu_item_click, page, text_size),
-            build_edit_menu(page, text_size),
+            build_edit_menu(page, text_size, on_menu_item_click),
             build_view_menu(on_menu_item_click, text_size)
         ]
     )

@@ -81,13 +81,6 @@ class Config:
                 self._settings['FFMPEG_PATH'] = ffmpeg_path_val_raw 
 
     def get(self, key, default=None):
-        """Retrieve a setting value by key, with an optional default."""
-        print(f"DEBUG settings.py Config.get: Requesting key='{key}'.")
-        # Print the specific value if the key exists, or that it's missing
-        if key in self._settings:
-            print(f"DEBUG settings.py Config.get: Key='{key}' FOUND, Value='{self._settings[key]}'")
-        else:
-            print(f"DEBUG settings.py Config.get: Key='{key}' NOT FOUND in _settings. Returning default='{default}'")
         return self._settings.get(key, default)
 
     def __getattr__(self, name):

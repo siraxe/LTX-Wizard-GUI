@@ -92,7 +92,7 @@ class PopupDialogBase(ft.Container):
     A reusable popup dialog base class for Flet apps, with customizable title, content, and width.
     GUI-building logic is separated into helper functions for maintainability.
     """
-    DEFAULT_DIALOG_WIDTH = 400
+    DEFAULT_DIALOG_WIDTH = 500
 
     def __init__(self, page: ft.Page, content: ft.Control, title: str = "Dialog", on_dismiss: callable = None):
         super().__init__(expand=True)

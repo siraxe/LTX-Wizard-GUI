@@ -2,6 +2,8 @@
 import flet as ft
 import base64 # Added import for base64
 import os
+import json
+import subprocess
 from ui._styles import create_textfield, create_styled_button, IMAGE_PLAYER_DIALOG_WIDTH, IMAGE_PLAYER_DIALOG_HEIGHT, BTN_STYLE2
 from ui.flet_hotkeys import AUTO_PLAYBACK, NEXT_KEY, PREV_KEY
 from typing import Optional, List, Callable, Tuple
@@ -50,7 +52,8 @@ def build_message_container(content: Optional[ft.Control] = None) -> ft.Containe
 def build_navigation_controls(on_prev: Callable, on_next: Callable) -> List[ft.Control]:
     return [
         ft.IconButton(ft.Icons.ARROW_LEFT, on_click=on_prev, tooltip="Previous image", icon_size=20),
-        ft.IconButton(ft.Icons.ARROW_RIGHT, on_click=on_next, tooltip="Next image", icon_size=20)
+        ft.IconButton(ft.Icons.ARROW_RIGHT, on_click=on_next, tooltip="Next image", icon_size=20),
+        ft.IconButton(ft.Icons.IMAGE, on_click=lambda e: open_in_image_editor(), tooltip="Open in image editor", icon_size=20)
     ]
 
 def build_crop_controls_row(
@@ -675,6 +678,41 @@ def open_image_captions_dialog(page: ft.Page, image_path: str, image_list: Optio
     # Update the page to show the dialog
     if page:
         page.update()
+
+def open_in_image_editor():
+    """
+    Opens the currently selected image in the external image editor specified in settings.json.
+    """
+    settings_path = os.path.join(os.path.dirname(__file__), '..', 'settings.json')
+    image_editor_path = None
+    try:
+        with open(settings_path, 'r') as f:
+            settings = json.load(f)
+            image_editor_path = settings.get("IMAGE_EDITOR_PATH")
+    except FileNotFoundError:
+        print(f"Error: settings.json not found at {settings_path}")
+        return
+    except json.JSONDecodeError:
+        print(f"Error: Could not decode settings.json at {settings_path}")
+        return
+
+    if not image_editor_path:
+        print("Error: IMAGE_EDITOR_PATH not found in settings.json")
+        return
+
+    current_image_path = image_dialog_state.image_path
+    if not current_image_path or not os.path.exists(current_image_path):
+        print(f"Error: No image selected or image not found at {current_image_path}")
+        return
+
+    try:
+        # Use subprocess.Popen to open the image with the specified editor
+        # This assumes the editor can be launched directly with the image path as an argument
+        subprocess.Popen([image_editor_path, current_image_path], shell=True)
+        print(f"Attempting to open {current_image_path} with {image_editor_path}")
+    except Exception as e:
+        print(f"Error opening image with external editor: {e}")
+        print(f"Please ensure '{image_editor_path}' is a valid executable and can open '{current_image_path}'.")
 
 def handle_dialog_dismiss(page: ft.Page):
     """

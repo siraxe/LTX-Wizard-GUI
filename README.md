@@ -36,7 +36,8 @@ You need any version of Python installed on your system.
 
 ### Data Preparation
 
-1. Create a new folder for your videos within the `workspace/datasets` directory. (or `workspace/datasets_img` for images)
+1. Create a new folder for your videos within the `workspace/datasets` directory or `workspace/datasets_img` for images.
+(moving folders in `_bak` subfolder will ignore them)
 2. In the GUI, navigate to the "Datasets" tab. Your new dataset folder will appear in the dropdown list.
 3. Add captions to your videos, either automatically or manually. Completing this step will update the `cap` status to `yes` for your dataset.
 4. If necessary, choose a preprocessing model and set the bucket size. (Please refer to the original repository documentation for detailed instructions on these settings).

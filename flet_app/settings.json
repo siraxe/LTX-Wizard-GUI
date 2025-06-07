@@ -27,8 +27,19 @@
     "THUMBNAILS_BASE_DIR": "workspace/thumbnails",
     "THUMBNAILS_IMG_BASE_DIR": "workspace/thumbnails_img",
     "DEFAULT_BUCKET_SIZE_STR": "[512, 512, 49]",
-    "VIDEO_EXTENSIONS": ["mp4", "avi", "mov", "mkv", "webm"],
-    "IMAGE_EXTENSIONS": ["jpg", "jpeg", "png"],
+    "VIDEO_EXTENSIONS": [
+        "mp4",
+        "avi",
+        "mov",
+        "mkv",
+        "webm"
+    ],
+    "IMAGE_EXTENSIONS": [
+        "jpg",
+        "jpeg",
+        "png"
+    ],
     "LORA_MODELS_DIR": "workspace/lora_models",
-    "FFMPEG_PATH": "D:/AI/LTX-Wizard-GUI/flet_app/ffmpeg/bin/ffmpeg.exe"
+    "FFMPEG_PATH": "D:/AI/LTX-Wizard-GUI/flet_app/ffmpeg/bin/ffmpeg.exe",
+    "IMAGE_EDITOR_PATH": "C:/Program Files/Adobe/Adobe Photoshop 2025/Photoshop.exe"
 }
