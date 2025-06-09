@@ -9,7 +9,7 @@ import asyncio
 from .._styles import create_textfield, add_section_title,create_dropdown ,create_styled_button
 from settings import settings
 from loguru import logger 
-from ui.tab_dataset_view import _build_expansion_tile 
+from ui.dataset_manager.dataset_layout_tab import _build_expansion_tile 
 import traceback # Import traceback
 
 # Global variables for Flet controls and state

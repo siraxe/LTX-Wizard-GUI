@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import json
 from .._styles import create_textfield, create_dropdown # Import helper functions
-from ..tab_dataset_view import get_dataset_folders, _get_dataset_base_dir  # Reuse the helper
+from ..dataset_manager.dataset_layout_tab import get_dataset_folders, _get_dataset_base_dir  # Reuse the helper
 from settings import settings
 
 

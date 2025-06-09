@@ -10,12 +10,12 @@ from settings import settings # Import only the config class
 
 from ui_popups.delete_caption_dialog import show_delete_caption_dialog
 from ui._styles import create_dropdown, create_styled_button, create_textfield, BTN_STYLE2
-from ui.utils.utils_datasets import (
+from ui.dataset_manager.dataset_utils import (
     get_dataset_folders,
     get_videos_and_thumbnails,
     apply_affix_from_textfield, find_and_replace_in_captions # New functions to be created
 )
-from ui.thumbnail_layout import create_thumbnail_container, set_thumbnail_selection_state # Import the new function
+from ui.dataset_manager.dataset_thumb_layout import create_thumbnail_container, set_thumbnail_selection_state # Import the new function
 from ui_popups.image_player_dialog import open_image_captions_dialog # Keep this import
 from ui_popups.video_player_dialog import open_video_captions_dialog # Keep this import
 from ui.flet_hotkeys import is_d_key_pressed_global # Import global D key state
@@ -493,7 +493,7 @@ def on_change_fps_click(e: ft.ControlEvent):
         update_thumbnails(e.page, thumbnails_grid_ref.current, force_refresh=True)
 
 def on_rename_files_click(e: ft.ControlEvent):
-    print("\n=== RENAME FUNCTION CALLED (tab_dataset_view.py) ===")
+    print("\n=== RENAME FUNCTION CALLED (dataset_layout_tab.py) ===")
     current_dataset_name = selected_dataset.get("value")
     print(f"[DEBUG] Current dataset name: {current_dataset_name}")
     
@@ -1206,7 +1206,7 @@ def _on_thumbnail_checkbox_change(video_path: str, is_checked: bool, thumbnail_i
             if i < len(thumbnails_grid_ref.current.controls):
                 control = thumbnails_grid_ref.current.controls[i]
                 if isinstance(control, ft.Container) and isinstance(control.content, ft.Stack) and len(control.content.controls) > 1:
-                    # Call the new function from thumbnail_layout to update the visual state
+                    # Call the new function from dataset_thumb_layout to update the visual state
                     set_thumbnail_selection_state(control, is_checked)
                     
                     if is_checked:
@@ -1218,7 +1218,7 @@ def _on_thumbnail_checkbox_change(video_path: str, is_checked: bool, thumbnail_i
         ui.flet_hotkeys.is_d_key_pressed_global = False
 
     else:
-        # Normal single selection (the visual update for this single click is handled in thumbnail_layout.py)
+        # Normal single selection (the visual update for this single click is handled in dataset_thumb_layout.py)
         if is_checked:
             selected_thumbnails_set.add(video_path)
         else:

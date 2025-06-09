@@ -26,7 +26,7 @@ def global_hotkey_handler(page, e):
     # Handle D key press for global state (Flet's on_keyboard_event is keydown only)
     if hasattr(e, 'key') and e.key.upper() == D_KEY:
         is_d_key_pressed_global = True
-        # This flag will be reset by the consuming UI component (e.g., tab_dataset_view)
+        # This flag will be reset by the consuming UI component (e.g., dataset_layout_tab)
         # after it processes the D-modified action.
         # Do not return here, allow other handlers to process if needed.
 

@@ -7,7 +7,7 @@ from ui_popups.video_player_dialog import open_video_captions_dialog
 def set_thumbnail_selection_state(thumbnail_container: ft.Container, is_selected: bool):
     """
     Updates the visual state (background color and checkbox opacity) of a thumbnail container.
-    This function is designed to be called programmatically from outside the thumbnail_layout module.
+    This function is designed to be called programmatically from outside the dataset_thumb_layout module.
     """
     checkbox = None
     if isinstance(thumbnail_container.content, ft.Stack):
