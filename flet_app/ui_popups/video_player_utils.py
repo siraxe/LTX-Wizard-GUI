@@ -469,6 +469,40 @@ def flip_video_horizontal(current_video_path: str) -> Tuple[bool, str, Optional[
         if os.path.exists(temp_output_path): os.remove(temp_output_path)
         return False, f"FFmpeg error during flip: {stderr.strip()}", None
 
+def rotate_video_90(current_video_path: str, direction: str) -> Tuple[bool, str, Optional[str]]:
+    """
+    Rotates video by 90 degrees.
+    direction: 'plus' for 90 degrees clockwise, 'minus' for 90 degrees counter-clockwise.
+    Returns (success, message, output_path_or_none).
+    """
+    ffmpeg_exe = _get_ffmpeg_exe_path()
+    temp_output_path = _get_temp_output_path(current_video_path, f"rotated_{direction}")
+    
+    transpose_value = ""
+    message = ""
+    if direction == 'plus':
+        transpose_value = "transpose=1" # Rotate 90 degrees clockwise
+        message = "Video rotated 90 degrees clockwise."
+    elif direction == 'minus':
+        transpose_value = "transpose=2" # Rotate 90 degrees counter-clockwise
+        message = "Video rotated 90 degrees counter-clockwise."
+    else:
+        return False, "Invalid rotation direction. Use 'plus' or 'minus'.", None
+
+    command = [
+        ffmpeg_exe, "-y", "-i", current_video_path,
+        "-vf", transpose_value,
+        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        "-c:a", "copy", # Copy audio stream
+        temp_output_path
+    ]
+    success, _, stderr = _run_ffmpeg_process(command)
+    if success and os.path.exists(temp_output_path):
+        return True, message, temp_output_path
+    else:
+        if os.path.exists(temp_output_path): os.remove(temp_output_path)
+        return False, f"FFmpeg error during rotation: {stderr.strip()}", None
+
 def reverse_video(current_video_path: str) -> Tuple[bool, str, Optional[str]]:
     """Reverses video. Returns (success, message, output_path_or_none)."""
     ffmpeg_exe = _get_ffmpeg_exe_path()
@@ -633,4 +667,3 @@ def split_video_by_frame(
         return False, f"FFmpeg error during split (part 2): {stderr2.strip()}", temp_output_path_1, None
         
     return True, f"Video split at frame {split_frame}.", temp_output_path_1, temp_output_path_2
-

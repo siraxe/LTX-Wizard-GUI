@@ -68,6 +68,7 @@ def build_crop_controls_row(
     on_time_remap_action: Callable, # Takes speed_value
     on_cut_to_frames_action: Callable, # Takes start_frame, end_frame
     on_split_to_video_action: Callable, # Takes split_frame
+    on_rotate_90_video_action: Callable, # Takes direction ('plus' or 'minus')
     on_cut_all_videos_to_max_action: Callable, # Takes num_frames
     video_list: Optional[List[str]] = None,
     on_caption_updated_callback: Optional[Callable] = None):
@@ -149,7 +150,10 @@ def build_crop_controls_row(
     # Action Buttons, wired to new action parameters
     flip_horizontal_button = create_styled_button(text="Flip Horizontal", on_click=on_flip_horizontal_action, col=6, button_style=BTN_STYLE2)
     cut_to_frames_button = create_styled_button(text="Cut to Frames", on_click=lambda e: on_cut_to_frames_action(int(frame_range_slider.start_value or 0), int(frame_range_slider.end_value or 0)), col=6, button_style=BTN_STYLE2)
-    split_to_video_button = create_styled_button(text="Split to Video", on_click=lambda e: on_split_to_video_action(int(frame_range_slider.start_value or 0)), col=6, button_style=BTN_STYLE2) # col=6 from _bak
+    split_to_video_button = create_styled_button(text="Split", on_click=lambda e: on_split_to_video_action(int(frame_range_slider.start_value or 0)), col=4, button_style=BTN_STYLE2) # col=6 from _bak
+    plus_90_button = create_styled_button(text="+90", on_click=lambda e: on_rotate_90_video_action('plus'), col=4, button_style=BTN_STYLE2) # col=6 from _bak
+    minus_90_button = create_styled_button(text="-90", on_click=lambda e: on_rotate_90_video_action('minus'), col=4, button_style=BTN_STYLE2) # col=6 from _bak
+    
     reverse_button = create_styled_button(text="Reverse", on_click=on_reverse_action, col=6, button_style=BTN_STYLE2)
     time_remap_button = create_styled_button(text="Time Remap", on_click=lambda e: on_time_remap_action(time_slider.value), col=6, button_style=BTN_STYLE2)
 
@@ -176,7 +180,8 @@ def build_crop_controls_row(
         controls=[
             frame_slider_col,
             ft.ResponsiveRow([flip_horizontal_button, cut_to_frames_button]),
-            split_to_video_button # Directly in column as per _bak
+            ft.ResponsiveRow([ plus_90_button, minus_90_button ,split_to_video_button]),
+            #split_to_video_button # Directly in column as per _bak
         ],
         spacing=5,
         col={'md': 4},
@@ -536,6 +541,7 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
     on_remap_act = lambda speed_val: page.run_thread(video_editor.on_time_remap, page, dialog_state.current_video_path_for_dialog, speed_val, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
     on_cut_act = lambda start_f, end_f: page.run_thread(video_editor.cut_to_frames, page, dialog_state.current_video_path_for_dialog, start_f, end_f, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
     on_split_act = lambda split_f: page.run_thread(video_editor.split_to_video, page, dialog_state.current_video_path_for_dialog, split_f, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback, dialog_state.active_video_player_instance)
+    on_rotate_90_act = lambda direction: page.run_thread(video_editor.on_rotate_90_video_action, page, dialog_state.current_video_path_for_dialog, direction, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
     on_cut_all_max_act = lambda num_frames: page.run_thread(video_editor.cut_all_videos_to_max, page, dialog_state.current_video_path_for_dialog, dialog_state.current_video_list_for_dialog, num_frames, dialog_state.active_on_caption_updated_callback)
 
     editing_controls_row = build_crop_controls_row(
@@ -550,6 +556,7 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
         on_time_remap_action=on_remap_act,
         on_cut_to_frames_action=on_cut_act,
         on_split_to_video_action=on_split_act,
+        on_rotate_90_video_action=on_rotate_90_act,
         on_cut_all_videos_to_max_action=on_cut_all_max_act,
         video_list=video_list,
         on_caption_updated_callback=on_caption_updated_callback)

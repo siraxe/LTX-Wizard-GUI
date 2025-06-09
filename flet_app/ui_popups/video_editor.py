@@ -135,6 +135,18 @@ def on_flip_horizontal(page: ft.Page, current_video_path: str, video_list: Optio
     else:
         if page: page.snack_bar = ft.SnackBar(ft.Text(msg), open=True); page.update()
 
+def on_rotate_90_video_action(page: ft.Page, current_video_path: str, direction: str, video_list: Optional[List[str]], on_caption_updated_callback: Optional[Callable]):
+    success, msg, temp_output_path = vpu.rotate_video_90(current_video_path, direction)
+    if success and temp_output_path:
+        try:
+            shutil.move(temp_output_path, current_video_path)
+            _generic_video_operation_ui_update(page, current_video_path, video_list, on_caption_updated_callback, msg)
+        except Exception as e:
+            if page: page.snack_bar = ft.SnackBar(ft.Text(f"Error moving rotated file: {e}"), open=True); page.update()
+            if os.path.exists(temp_output_path): os.remove(temp_output_path)
+    else:
+        if page: page.snack_bar = ft.SnackBar(ft.Text(msg), open=True); page.update()
+
 def on_reverse(page: ft.Page, current_video_path: str, video_list: Optional[List[str]], on_caption_updated_callback: Optional[Callable]): 
     success, msg, temp_output_path = vpu.reverse_video(current_video_path)
     if success and temp_output_path:
