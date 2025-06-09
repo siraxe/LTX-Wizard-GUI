@@ -8,8 +8,6 @@ import shutil
 import time
 from settings import settings # Import only the config class
 
-from ui_popups.image_player_dialog import open_image_captions_dialog
-from ui_popups.video_player_dialog import open_video_captions_dialog
 from ui_popups.delete_caption_dialog import show_delete_caption_dialog
 from ui._styles import create_dropdown, create_styled_button, create_textfield, BTN_STYLE2
 from ui.utils.utils_datasets import (
@@ -17,6 +15,10 @@ from ui.utils.utils_datasets import (
     get_videos_and_thumbnails,
     apply_affix_from_textfield, find_and_replace_in_captions # New functions to be created
 )
+from ui.thumbnail_layout import create_thumbnail_container, set_thumbnail_selection_state # Import the new function
+from ui_popups.image_player_dialog import open_image_captions_dialog # Keep this import
+from ui_popups.video_player_dialog import open_video_captions_dialog # Keep this import
+from ui.flet_hotkeys import is_d_key_pressed_global # Import global D key state
 
 # ======================================================================================
 # Global State (Keep track of UI controls and running processes)
@@ -32,6 +34,11 @@ processed_output_field = ft.TextField(
     label="Processed Output", text_size=10, multiline=True, read_only=True,
     visible=False, min_lines=6, max_lines=15, expand=True)
 bottom_app_bar_ref = None
+
+# Multi-selection state
+selected_thumbnails_set = set() # Stores video_path of selected thumbnails
+last_clicked_thumbnail_index = -1 # Stores the index of the last clicked checkbox
+# is_d_key_pressed = False # Tracks if 'D' hotkey is pressed - REMOVED, now global in flet_hotkeys.py
 
 # Global controls (defined here but created in _create_global_controls)
 bucket_size_textfield: ft.TextField = None
@@ -1185,6 +1192,42 @@ def on_preprocess_dataset_click(e: ft.ControlEvent,
 # Global dictionary to track temporary thumbnail paths and their creation times
 _temp_thumbnails = {}
 
+def _on_thumbnail_checkbox_change(video_path: str, is_checked: bool, thumbnail_index: int):
+    global selected_thumbnails_set, last_clicked_thumbnail_index
+    # Use the global state from flet_hotkeys.py
+    import ui.flet_hotkeys # Re-import to get a mutable reference to the module itself
+
+    if ui.flet_hotkeys.is_d_key_pressed_global and last_clicked_thumbnail_index != -1:
+        # D key is pressed, perform range selection
+        start_index = min(last_clicked_thumbnail_index, thumbnail_index)
+        end_index = max(last_clicked_thumbnail_index, thumbnail_index)
+
+        for i in range(start_index, end_index + 1):
+            if i < len(thumbnails_grid_ref.current.controls):
+                control = thumbnails_grid_ref.current.controls[i]
+                if isinstance(control, ft.Container) and isinstance(control.content, ft.Stack) and len(control.content.controls) > 1:
+                    # Call the new function from thumbnail_layout to update the visual state
+                    set_thumbnail_selection_state(control, is_checked)
+                    
+                    if is_checked:
+                        selected_thumbnails_set.add(control.data) # Add video_path to set
+                    else:
+                        selected_thumbnails_set.discard(control.data) # Remove video_path from set
+        
+        # Reset the global D key state after processing the range selection
+        ui.flet_hotkeys.is_d_key_pressed_global = False
+
+    else:
+        # Normal single selection (the visual update for this single click is handled in thumbnail_layout.py)
+        if is_checked:
+            selected_thumbnails_set.add(video_path)
+        else:
+            selected_thumbnails_set.discard(video_path)
+
+    last_clicked_thumbnail_index = thumbnail_index # Update last clicked index
+
+    # print(f"Selected: {len(selected_thumbnails_set)} items") # Debugging
+
 def cleanup_old_temp_thumbnails(thumb_dir: str, max_age_seconds: int = 3600):
     """Clean up temporary thumbnails older than max_age_seconds"""
     current_time = time.time()
@@ -1202,7 +1245,7 @@ def cleanup_old_temp_thumbnails(thumb_dir: str, max_age_seconds: int = 3600):
                 print(f"Error cleaning up old temp thumbnail {filename}: {e}")
 
 def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None, force_refresh: bool = False):
-    global _temp_thumbnails
+    global _temp_thumbnails, selected_thumbnails_set, last_clicked_thumbnail_index
     
     if not grid_control:
         return
@@ -1210,29 +1253,6 @@ def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None
     current_selection = selected_dataset.get("value")
     grid_control.controls.clear()
     processed_map = load_processed_map(current_selection) if current_selection else None
-
-    # Define image extensions to check
-    image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp']
-
-    # New helper function for on_click logic
-    def _handle_thumbnail_click(e_click, vp, current_grid, page_ctx):
-        file_ext = os.path.splitext(vp)[1].lower()
-        if file_ext in image_extensions:
-            if page_ctx:
-                open_image_captions_dialog(
-                    page_ctx,
-                    vp,
-                    video_files_list["value"],
-                    on_caption_updated_callback=lambda _: update_thumbnails(page_ctx=page_ctx, grid_control=current_grid, force_refresh=True)
-                )
-        else: # It's a video
-            if page_ctx:
-                open_video_captions_dialog(
-                    page_ctx,
-                    vp,
-                    video_files_list["value"],
-                    on_caption_updated_callback=lambda: update_thumbnails(page_ctx=page_ctx, grid_control=current_grid, force_refresh=True)
-                )
 
     if not current_selection:
         folders_exist = get_dataset_folders() is not None and len(get_dataset_folders()) > 0
@@ -1246,44 +1266,31 @@ def update_thumbnails(page_ctx: ft.Page | None, grid_control: ft.GridView | None
         if not thumbnail_paths_map:
             grid_control.controls.append(ft.Text(f"No videos found in dataset '{current_selection}'."))
         else:
-            for video_path, thumb_path in thumbnail_paths_map.items():
-                video_name = os.path.basename(video_path)
-                info = video_info.get(video_name, {})
-                width, height, frames = info.get("width", "?"), info.get("height", "?"), info.get("frames", "?")
-                has_caption = any(entry.get("media_path") == video_name and entry.get("caption", "").strip() for entry in dataset_captions)
-                cap_val, cap_color = ("yes", ft.Colors.GREEN) if has_caption else ("no", ft.Colors.RED)
-                proc_val, proc_color = ("yes", ft.Colors.GREEN) if processed_map and video_name in processed_map else ("no", ft.Colors.RED)
+            # Clear selection state if dataset changes or force refresh
+            if force_refresh or (selected_dataset.get("value") != current_selection):
+                selected_thumbnails_set.clear()
+                last_clicked_thumbnail_index = -1
 
-                # Always use the original thumbnail path - temporary thumbnail creation is disabled
-                image_src = thumb_path
+            # Sort thumbnails by video_path for consistent indexing
+            sorted_thumbnail_items = sorted(thumbnail_paths_map.items(), key=lambda item: item[0])
 
+            for i, (video_path, thumb_path) in enumerate(sorted_thumbnail_items):
+                has_caption = any(entry.get("media_path") == os.path.basename(video_path) and entry.get("caption", "").strip() for entry in dataset_captions)
+                
                 grid_control.controls.append(
-                    ft.Container(
-                        content=ft.Column([
-                            ft.Image(
-                                src=image_src, # Use temp path if created, otherwise original
-                                width=settings.THUMB_TARGET_W,
-                                height=settings.THUMB_TARGET_H,
-                                fit=ft.ImageFit.COVER,
-                                border_radius=ft.border_radius.all(5)
-                            ),
-                            ft.Text(spans=[
-                                ft.TextSpan("[cap - ", style=ft.TextStyle(color=ft.Colors.GREY_500, size=10)),
-                                ft.TextSpan(cap_val, style=ft.TextStyle(color=cap_color, size=10)),
-                                ft.TextSpan(", proc - ", style=ft.TextStyle(color=ft.Colors.GREY_500, size=10)),
-                                ft.TextSpan(proc_val, style=ft.TextStyle(color=proc_color, size=10)),
-                                ft.TextSpan("]", style=ft.TextStyle(color=ft.Colors.GREY_500, size=10)),
-                            ], size=10),
-                            ft.Text(f"[{width}x{height} - {frames} frames]", size=10, color=ft.Colors.GREY_500),
-                        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, tight=True),
-                        data=video_path, # Store original video path in data
-                        on_click=lambda e_click, vp=video_path, current_grid=grid_control, page_ctx=page_ctx: _handle_thumbnail_click(e_click, vp, current_grid, page_ctx),
-                        tooltip=video_name,
-                        width=settings.THUMB_TARGET_W + 10,
-                        height=settings.THUMB_TARGET_H + 45, # Adjust height to fit text
-                        padding=5,
-                        border=ft.border.all(1, ft.Colors.OUTLINE),
-                        border_radius=ft.border_radius.all(5)
+                    create_thumbnail_container(
+                        page_ctx=page_ctx,
+                        video_path=video_path,
+                        thumb_path=thumb_path,
+                        video_info=video_info,
+                        has_caption=has_caption,
+                        processed_map=processed_map,
+                        video_files_list=video_files_list["value"],
+                        update_thumbnails_callback=update_thumbnails,
+                        grid_control=grid_control,
+                        on_checkbox_change_callback=_on_thumbnail_checkbox_change, # Pass the new handler
+                        thumbnail_index=i, # Pass the index
+                        is_selected_initially=(video_path in selected_thumbnails_set) # Pass initial selection state
                     )
                 )
 
@@ -1590,8 +1597,11 @@ def _build_bottom_status_bar():
 # ======================================================================================
 
 def dataset_tab_layout(page=None):
-    global bottom_app_bar_ref # Need to assign to the global ref
+    global bottom_app_bar_ref # No longer need to reference is_d_key_pressed here
     p_page = page # Alias for clarity
+
+    # The global keyboard event handler is now managed in flet_hotkeys.py
+    # No need for a local on_keyboard_event here.
 
     # Create global controls if not already created (should happen once per app lifecycle)
     if bucket_size_textfield is None: # Check one of the global controls

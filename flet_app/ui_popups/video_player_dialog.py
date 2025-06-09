@@ -612,6 +612,7 @@ def update_playback_range_and_seek_video(start_frame: int, end_frame: int):
 
 def handle_dialog_dismiss(page: ft.Page):
     try:
+        captions_saved = False # Initialize to False
         # Save any unsaved captions if they've been modified
         if hasattr(dialog_state, 'current_video_path_for_dialog') and dialog_state.current_video_path_for_dialog:
             if (hasattr(dialog_state, 'active_caption_field_instance') and 
