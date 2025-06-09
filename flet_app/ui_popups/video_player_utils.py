@@ -585,22 +585,19 @@ def cut_video_by_frames(
         return False, "Could not get valid FPS for cutting by frames.", None
     
     fps = metadata['fps']
-    if start_frame >= end_frame:
-        return False, "Start frame must be less than end frame.", None
+    if start_frame > end_frame: # Changed from >= to > to allow single-frame cuts if needed
+        return False, "Start frame must be less than or equal to end frame.", None
 
     start_time = start_frame / fps
-    # To make the cut inclusive of the end_frame, the duration or -to time needs careful calculation.
-    # Using -to (end time) is often more intuitive.
-    end_time = end_frame / fps 
-    # If end_frame is the very last frame, ensure end_time is slightly beyond it or use frame numbers directly if ffmpeg supports.
-    # For -to, it specifies the time to stop writing output.
+    # Calculate duration to include the end_frame
+    duration = (end_frame - start_frame + 1) / fps 
 
     temp_output_path = _get_temp_output_path(current_video_path, "cut")
     command = [
         ffmpeg_exe, "-y", 
-        "-i", current_video_path, # Input after -ss for faster seeking for some formats
+        "-i", current_video_path, 
         "-ss", str(start_time),   # Seek to start time
-        "-to", str(end_time),     # Cut up to end time
+        "-t", str(duration),      # Cut for the calculated duration
         "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
         "-c:a", "copy", # Copy audio stream
         temp_output_path

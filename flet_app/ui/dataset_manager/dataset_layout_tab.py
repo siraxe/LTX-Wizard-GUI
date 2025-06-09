@@ -333,9 +333,9 @@ def _create_global_controls():
         "Trigger WORD", "", col=9, expand=True, hint_text="e.g. 'CAKEIFY' , leave empty for none"
     )
 
-    bucket_size_textfield.on_change = lambda e: on_bucket_or_model_change(e, selected_dataset, bucket_size_textfield, model_name_dropdown, trigger_word_textfield)
-    model_name_dropdown.on_change = lambda e: on_bucket_or_model_change(e, selected_dataset, bucket_size_textfield, model_name_dropdown, trigger_word_textfield)
-    trigger_word_textfield.on_change = lambda e: on_bucket_or_model_change(e, selected_dataset, bucket_size_textfield, model_name_dropdown, trigger_word_textfield)
+    bucket_size_textfield.on_change = lambda e: e.page.run_task(on_bucket_or_model_change, e, selected_dataset, bucket_size_textfield, model_name_dropdown, trigger_word_textfield)
+    model_name_dropdown.on_change = lambda e: e.page.run_task(on_bucket_or_model_change, e, selected_dataset, bucket_size_textfield, model_name_dropdown, trigger_word_textfield)
+    trigger_word_textfield.on_change = lambda e: e.page.run_task(on_bucket_or_model_change, e, selected_dataset, bucket_size_textfield, model_name_dropdown, trigger_word_textfield)
 
 def _build_dataset_selection_section(dataset_dropdown_control: ft.Dropdown, update_button_control: ft.IconButton):
     return ft.Column([
@@ -590,7 +590,8 @@ def dataset_tab_layout(page=None):
         dataset_add_captions_button_ref.current,
         dataset_delete_captions_button_ref.current
     )
-    dataset_add_captions_button_control.on_click = lambda e: on_add_captions_click_with_model(
+    dataset_add_captions_button_control.on_click = lambda e: e.page.run_task(
+        on_add_captions_click_with_model,
         e,
         caption_model_dropdown_ref.current,
         captions_checkbox_ref.current,
@@ -604,7 +605,8 @@ def dataset_tab_layout(page=None):
         processed_progress_bar,
         processed_output_field,
         set_bottom_app_bar_height,
-        update_thumbnails
+        update_thumbnails,
+        thumbnails_grid_control # Add this argument
     )
     dataset_delete_captions_button_control.on_click = lambda e: on_delete_captions_click(
         e,
@@ -616,7 +618,8 @@ def dataset_tab_layout(page=None):
         update_thumbnails
     )
 
-    dataset_preprocess_button_control.on_click = lambda e: on_preprocess_dataset_click(
+    dataset_preprocess_button_control.on_click = lambda e: e.page.run_task(
+        on_preprocess_dataset_click,
         e,
         model_name_dropdown,
         bucket_size_textfield,
@@ -626,7 +629,8 @@ def dataset_tab_layout(page=None):
         processed_progress_bar,
         processed_output_field,
         set_bottom_app_bar_height,
-        update_thumbnails
+        update_thumbnails,
+        thumbnails_grid_control
     )
 
     change_fps_button.on_click = lambda e: e.page.run_task(on_change_fps_click,

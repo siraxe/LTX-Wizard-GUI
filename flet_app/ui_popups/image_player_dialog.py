@@ -501,7 +501,7 @@ def handle_caption_dialog_keyboard(page: ft.Page, e: ft.KeyboardEvent):
 
 # --- Main Dialog Construction ---
 def create_image_player_with_captions_content(page: ft.Page, image_path: str, image_list: List[str], on_caption_updated_callback: Optional[Callable] = None) -> Tuple[ft.Column, List[ft.Control]]:
-    image_dialog_state.current_image_path_for_dialog = image_path
+    # image_dialog_state.current_image_path_for_dialog = image_path # Redundant, use image_dialog_state.image_path
     image_dialog_state.current_image_list_for_dialog = image_list
     image_dialog_state.active_on_caption_updated_callback = on_caption_updated_callback
     image_dialog_state.active_page_ref = page
@@ -535,7 +535,7 @@ def create_image_player_with_captions_content(page: ft.Page, image_path: str, im
     on_crop_dim_action = lambda e: page.run_thread(
         image_editor.handle_crop_image_click,
         page, image_dialog_state.active_width_field_instance, image_dialog_state.active_height_field_instance,
-        image_dialog_state.current_image_path_for_dialog, image_dialog_state.current_image_list_for_dialog,
+        image_dialog_state.image_path, image_dialog_state.current_image_list_for_dialog,
         image_dialog_state.active_on_caption_updated_callback
     )
     on_crop_all_act = lambda e: show_batch_crop_warning_dialog(
@@ -543,7 +543,7 @@ def create_image_player_with_captions_content(page: ft.Page, image_path: str, im
         on_confirm=lambda: page.run_thread(
             image_editor.handle_crop_all_images,
             page, 
-            image_dialog_state.current_image_path_for_dialog,
+            image_dialog_state.image_path,
             image_dialog_state.active_width_field_instance, 
             image_dialog_state.active_height_field_instance,
             image_dialog_state.current_image_list_for_dialog,
@@ -552,11 +552,11 @@ def create_image_player_with_captions_content(page: ft.Page, image_path: str, im
     )
     on_get_closest_act = lambda e: image_editor.handle_set_closest_div32(
         image_dialog_state.active_width_field_instance, image_dialog_state.active_height_field_instance,
-        image_dialog_state.current_image_path_for_dialog, page
+        image_dialog_state.image_path, page
     )
     on_crop_overlay_apply_act = lambda e: page.run_thread(
         image_editor._perform_crop_from_editor_overlay,
-        page, image_dialog_state.current_image_path_for_dialog,
+        page, image_dialog_state.image_path,
         image_dialog_state.current_image_list_for_dialog, image_dialog_state.active_on_caption_updated_callback
     )
 
@@ -572,20 +572,20 @@ def create_image_player_with_captions_content(page: ft.Page, image_path: str, im
     
     on_flip_image_act = lambda e: page.run_thread(
         image_editor.handle_flip_image,
-        page, image_dialog_state.current_image_path_for_dialog,
+        page, image_dialog_state.image_path,
         image_dialog_state.current_image_list_for_dialog,
         image_dialog_state.active_on_caption_updated_callback
     )
     on_rotate_plus_90_act = lambda e: page.run_thread(
         image_editor.handle_rotate_image,
-        page, image_dialog_state.current_image_path_for_dialog,
+        page, image_dialog_state.image_path,
         image_dialog_state.current_image_list_for_dialog,
         image_dialog_state.active_on_caption_updated_callback,
         90
     )
     on_rotate_minus_90_act = lambda e: page.run_thread(
         image_editor.handle_rotate_image,
-        page, image_dialog_state.current_image_path_for_dialog,
+        page, image_dialog_state.image_path,
         image_dialog_state.current_image_list_for_dialog,
         image_dialog_state.active_on_caption_updated_callback,
         -90
@@ -721,6 +721,13 @@ def handle_dialog_dismiss(page: ft.Page):
     """
     try:
         captions_saved = False # Initialize captions_saved
+        
+        # Temporarily disable the caption updated callback to prevent thumbnail refresh on dismiss
+        # The user requested to disable thumbnail refresh when the player dialog is closed.
+        # This callback is responsible for triggering thumbnail updates.
+        original_on_caption_updated_callback = image_dialog_state.active_on_caption_updated_callback
+        image_dialog_state.active_on_caption_updated_callback = None
+
         # Save any unsaved captions if they've been modified
         if hasattr(image_dialog_state, 'image_path') and image_dialog_state.image_path:
             # Only save if there are unsaved changes
@@ -731,7 +738,7 @@ def handle_dialog_dismiss(page: ft.Page):
                     page, 
                     image_dialog_state.image_path, 
                     image_dialog_state.active_caption_field_instance.value.strip() if image_dialog_state.active_caption_field_instance.value else "", 
-                    image_dialog_state.active_on_caption_updated_callback, # Pass the callback
+                    image_dialog_state.active_on_caption_updated_callback, # Pass the callback (now None)
                     'caption'
                 )
                 if success: captions_saved = True
@@ -743,11 +750,14 @@ def handle_dialog_dismiss(page: ft.Page):
                     page, 
                     image_dialog_state.image_path, 
                     image_dialog_state.active_caption_neg_field_instance.value.strip() if image_dialog_state.active_caption_neg_field_instance.value else "", 
-                    image_dialog_state.active_on_caption_updated_callback, # Pass the callback
+                    image_dialog_state.active_on_caption_updated_callback, # Pass the callback (now None)
                     'negative_caption'
                 )
                 if success: captions_saved = True
         
+        # Restore the original callback if it existed
+        image_dialog_state.active_on_caption_updated_callback = original_on_caption_updated_callback
+
         # Batch clear page attributes
         page_attrs = ['image_dialog_open', 'image_dialog_hotkey_handler']
         for attr in page_attrs:
@@ -762,9 +772,9 @@ def handle_dialog_dismiss(page: ft.Page):
         image_dialog_state.active_caption_field_instance = None
         image_dialog_state.active_caption_neg_field_instance = None
         image_dialog_state.active_message_container_instance = None
-        image_dialog_state.current_image_path_for_dialog = None
+        # image_dialog_state.current_image_path_for_dialog = None # Removed as it's redundant
         image_dialog_state.current_image_list_for_dialog = None
-        image_dialog_state.active_on_caption_updated_callback = None
+        # image_dialog_state.active_on_caption_updated_callback = None # This is now handled by restoring original_on_caption_updated_callback
         image_dialog_state.active_image_player_instance = None
         image_dialog_state.page = None
         image_dialog_state.image_path = None

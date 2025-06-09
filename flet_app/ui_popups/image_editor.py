@@ -119,9 +119,29 @@ def _generic_image_operation_ui_update(
     ):
     if page:
         page.snack_bar = ft.SnackBar(ft.Text(operation_message), open=True)
-        # Removed ipu.update_image_info_json as per user request
-        image_player_dialog.open_image_captions_dialog(page, processed_image_path, image_list, on_caption_updated_callback)
-        if on_caption_updated_callback:
+        
+        # Update the image source
+        if image_dialog_state.active_image_player_instance:
+            image_player_dialog.update_image_player_source(
+                image_dialog_state.active_image_player_instance, 
+                processed_image_path
+            )
+        
+        # Update dialog state with the new image path
+        image_dialog_state.image_path = processed_image_path
+
+        # Update captions and UI
+        caption_text, neg_caption_text, message_ui_element = image_player_dialog.load_caption_ui_elements(processed_image_path)
+        image_player_dialog.update_caption_and_message_ui(caption_text, neg_caption_text, message_ui_element)
+        
+        # Update dialog title
+        image_player_dialog.update_dialog_title(page, processed_image_path)
+
+        # Force update the image stack to ensure the image re-renders
+        if image_dialog_state.active_image_player_stack:
+            image_dialog_state.active_image_player_stack.update()
+        
+        if on_caption_updated_callback: 
             on_caption_updated_callback(processed_image_path) 
         page.update()
 

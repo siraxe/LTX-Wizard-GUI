@@ -16,7 +16,8 @@ from ui_popups.delete_caption_dialog import show_delete_caption_dialog
 from ui.dataset_manager.dataset_utils import (
     load_dataset_config, save_dataset_config, load_processed_map,
     load_dataset_captions, delete_captions_file, validate_bucket_values,
-    _get_dataset_base_dir, get_videos_and_thumbnails, get_dataset_folders
+    _get_dataset_base_dir, get_videos_and_thumbnails, get_dataset_folders,
+    parse_bucket_string_to_list # Add this import
 )
 from ui.dataset_manager.dataset_thumb_layout import create_thumbnail_container, set_thumbnail_selection_state
 from ui.flet_hotkeys import is_d_key_pressed_global # Import global D key state
@@ -906,7 +907,8 @@ async def on_preprocess_dataset_click(e: ft.ControlEvent,
                                 processed_progress_bar_ref,
                                 processed_output_field_ref,
                                 set_bottom_app_bar_height_func,
-                                update_thumbnails_func):
+                                update_thumbnails_func,
+                                thumbnails_grid_control: ft.GridView): # Add this argument
     current_dataset_name = selected_dataset_ref.get("value")
     if not current_dataset_name:
         if e.page:
@@ -1033,9 +1035,17 @@ async def apply_affix_from_textfield(e: ft.ControlEvent, affix_type: str, select
     captions_json_path = os.path.join(dataset_dir, clean_dataset_name, "captions.json")
 
     if not os.path.exists(captions_json_path):
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"No captions.json found for dataset '{current_dataset_name}'."), open=True)
-        if e.page: e.page.update()
-        return
+        # Create an empty captions.json file if it doesn't exist
+        try:
+            with open(captions_json_path, 'w', encoding='utf-8') as f:
+                json.dump([], f, indent=4)
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Created empty captions.json for dataset '{current_dataset_name}'."), open=True)
+            if e.page: e.page.update()
+            captions_data = [] # Initialize captions_data as empty list
+        except Exception as ex:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error creating captions.json: {ex}"), open=True)
+            if e.page: e.page.update()
+            return # Exit if file creation fails
 
     try:
         with open(captions_json_path, 'r', encoding='utf-8') as f:
@@ -1053,6 +1063,42 @@ async def apply_affix_from_textfield(e: ft.ControlEvent, affix_type: str, select
         e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Captions data for '{current_dataset_name}' is not a list."), open=True)
         if e.page: e.page.update()
         return
+
+    # --- NEW LOGIC: Check for missing videos/images and add them to captions.json ---
+    dataset_folder_path = os.path.join(dataset_dir, clean_dataset_name)
+    
+    # Get actual media files in the dataset folder
+    # get_videos_and_thumbnails returns (video_paths, thumbnail_paths)
+    # We only need the video_paths (or image_paths)
+    all_media_paths_in_folder, _ = get_videos_and_thumbnails(dataset_folder_path, DATASETS_TYPE_ref["value"])
+    
+    # Extract base filenames from existing captions_data
+    existing_captioned_basenames = {os.path.basename(item["media_path"]) for item in captions_data if isinstance(item, dict) and "media_path" in item}
+    
+    new_entries_added = False
+    for media_full_path in all_media_paths_in_folder:
+        media_basename = os.path.basename(media_full_path)
+        if media_basename not in existing_captioned_basenames:
+            # Add new entry for the missing video/image
+            captions_data.append({
+                "media_path": media_basename,
+                "caption": "" # Default empty caption
+            })
+            new_entries_added = True
+            print(f"Added missing media to captions.json: {media_basename}") # For debugging
+
+    if new_entries_added:
+        # Sort the captions_data by media_path after adding new entries
+        captions_data.sort(key=lambda x: x.get("media_path", ""))
+        try:
+            with open(captions_json_path, 'w', encoding='utf-8') as f:
+                json.dump(captions_data, f, indent=4)
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Updated captions.json with new media entries."), open=True)
+            if e.page: e.page.update()
+        except Exception as ex:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error saving updated captions.json: {ex}"), open=True)
+            if e.page: e.page.update()
+    # --- END NEW LOGIC ---
 
     selected_files_from_thumbnails = _get_selected_filenames(thumbnails_grid_ref_obj)
     

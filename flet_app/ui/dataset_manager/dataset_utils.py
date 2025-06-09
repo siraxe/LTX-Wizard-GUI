@@ -82,16 +82,31 @@ def save_dataset_config(dataset_name: str, bucket_str: str, model_name: str, tri
         # For now, we'll just use the default if parsing fails.
         bucket_str_val = settings.DEFAULT_BUCKET_SIZE_STR
 
-    dataset_config = {
-        "bucket_resolution": bucket_str_val,
-        "model_name": model_name,
-        "trigger_word": trigger_word
-    }
+    # Load existing config to preserve other keys
+    existing_config = {}
+    if os.path.exists(dataset_info_json_path):
+        try:
+            with open(dataset_info_json_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                if content.strip(): # Check if file is not empty
+                    existing_config = json.loads(content)
+                    if not isinstance(existing_config, dict): # Ensure it's a dict
+                        existing_config = {}
+                else:
+                    existing_config = {} # Empty file, treat as empty dict
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"Warning: Could not load existing info.json for merging: {e}")
+            existing_config = {} # Fallback to empty if loading fails
+
+    # Update only the relevant keys
+    existing_config["bucket_resolution"] = bucket_str_val
+    existing_config["model_name"] = model_name
+    existing_config["trigger_word"] = trigger_word
 
     try:
         os.makedirs(os.path.dirname(dataset_info_json_path), exist_ok=True)
-        with open(dataset_info_json_path, "w") as f:
-            json.dump(dataset_config, f, indent=4)
+        with open(dataset_info_json_path, "w", encoding='utf-8') as f:
+            json.dump(existing_config, f, indent=4, ensure_ascii=False)
         return True
     except Exception as e:
         print(f"Error saving dataset config: {e}")
