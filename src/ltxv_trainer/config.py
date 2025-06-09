@@ -183,6 +183,10 @@ class DataConfig(ConfigBaseModel):
         description="Number of background processes for data loading (0 means synchronous loading)",
         ge=0,
     )
+    dataset_type: Literal["video", "image"] = Field(
+        default="video",
+        description="Type of dataset: 'video' or 'image'",
+    )
 
 
 class ValidationConfig(ConfigBaseModel):

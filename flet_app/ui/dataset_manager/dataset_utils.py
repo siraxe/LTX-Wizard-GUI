@@ -2,11 +2,156 @@ import os
 import glob
 import cv2
 import json
-import flet as ft
+import flet as ft # Keep flet import for type hints if needed, but not for UI elements
 from settings import settings
-import asyncio
-import subprocess
-import shutil
+import asyncio # Keep for async functions if any remain
+import subprocess # Keep for subprocess if any remain
+import shutil # Keep for shutil if any remain
+import time # Keep for time if any remain
+
+# ======================================================================================
+# Data & Utility Functions (File I/O, data parsing, validation)
+# ======================================================================================
+
+def parse_bucket_string_to_list(raw_bucket_str: str) -> list[int] | None:
+    raw_bucket_str = raw_bucket_str.strip()
+    try:
+        if raw_bucket_str.startswith('[') and raw_bucket_str.endswith(']'):
+            parsed_list = json.loads(raw_bucket_str)
+            if isinstance(parsed_list, list) and len(parsed_list) == 3 and all(isinstance(i, int) for i in parsed_list):
+                return parsed_list
+        elif 'x' in raw_bucket_str.lower():
+            parts_x = raw_bucket_str.lower().split('x')
+            if len(parts_x) == 3 and all(p.strip().isdigit() for p in parts_x):
+                return [int(p.strip()) for p in parts_x]
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return None
+
+def format_bucket_list_to_string(bucket_list: list) -> str:
+    if isinstance(bucket_list, list) and len(bucket_list) == 3 and all(isinstance(i, (int, float)) for i in bucket_list):
+        return f"[{bucket_list[0]}, {bucket_list[1]}, {bucket_list[2]}]"
+    return settings.DEFAULT_BUCKET_SIZE_STR
+
+def load_dataset_config(dataset_name: str | None) -> tuple[str, str, str]:
+    bucket_to_set = settings.DEFAULT_BUCKET_SIZE_STR
+    model_to_set = settings.ltx_def_model
+    trigger_word_to_set = ''
+    if dataset_name:
+        base_dir, _ = _get_dataset_base_dir(dataset_name) # Unpack the tuple
+        dataset_info_json_path = os.path.join(base_dir, dataset_name.replace('(img) ', '').replace(' (img)', ''), "info.json")
+        if os.path.exists(dataset_info_json_path):
+            try:
+                with open(dataset_info_json_path, 'r') as f:
+                    loaded_data = json.load(f)
+                    if isinstance(loaded_data, dict):
+                        # Read from top level of loaded_data
+                        bucket_res_val = loaded_data.get("bucket_resolution") # Corresponds to 'size_val'
+                        model_name_val = loaded_data.get("model_name")       # Corresponds to 'type_val'
+                        trigger_word_val = loaded_data.get("trigger_word")
+
+                        # bucket_resolution can be a list or a string representation of a list
+                        if isinstance(bucket_res_val, list):
+                            bucket_to_set = format_bucket_list_to_string(bucket_res_val)
+                        elif isinstance(bucket_res_val, str):
+                            # Attempt to parse if it's a string like "[512, 512, 49]"
+                            parsed_list = parse_bucket_string_to_list(bucket_res_val)
+                            if parsed_list:
+                                bucket_to_set = format_bucket_list_to_string(parsed_list)
+                            else: # If string is not parsable, keep it as is or use default
+                                bucket_to_set = bucket_res_val # Or settings.DEFAULT_BUCKET_SIZE_STR if strict parsing needed
+                        
+                        if isinstance(model_name_val, str):
+                            model_to_set = model_name_val
+                        if isinstance(trigger_word_val, str):
+                            trigger_word_to_set = trigger_word_val
+            except (json.JSONDecodeError, IOError):
+                pass
+    return bucket_to_set, model_to_set, trigger_word_to_set
+
+def save_dataset_config(dataset_name: str, bucket_str: str, model_name: str, trigger_word: str) -> bool:
+    base_dir, _ = _get_dataset_base_dir(dataset_name)
+    dataset_info_json_path = os.path.join(base_dir, dataset_name.replace('(img) ', '').replace(' (img)', ''), "info.json")
+    
+    bucket_str_val = bucket_str # Initialize with the input value
+
+    parsed_bucket_list = parse_bucket_string_to_list(bucket_str)
+    if parsed_bucket_list is None:
+        # This part needs to be handled by the caller (e.g., dataset_actions.py)
+        # as it involves Flet UI elements (e.page.snack_bar)
+        # For now, we'll just use the default if parsing fails.
+        bucket_str_val = settings.DEFAULT_BUCKET_SIZE_STR
+
+    dataset_config = {
+        "bucket_resolution": bucket_str_val,
+        "model_name": model_name,
+        "trigger_word": trigger_word
+    }
+
+    try:
+        os.makedirs(os.path.dirname(dataset_info_json_path), exist_ok=True)
+        with open(dataset_info_json_path, "w") as f:
+            json.dump(dataset_config, f, indent=4)
+        return True
+    except Exception as e:
+        print(f"Error saving dataset config: {e}")
+    return False
+
+def load_processed_map(dataset_name: str) -> dict | None:
+    base_dir, _ = _get_dataset_base_dir(dataset_name) # Unpack the tuple
+    processed_json_path = os.path.join(base_dir, dataset_name.replace('(img) ', '').replace(' (img)', ''), "preprocessed_data", "processed.json")
+    if os.path.exists(processed_json_path):
+        try:
+            with open(processed_json_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+    return None
+
+def load_dataset_captions(dataset_name: str) -> list:
+    base_dir, _ = _get_dataset_base_dir(dataset_name) # Unpack the tuple
+    dataset_captions_json_path = os.path.join(base_dir, dataset_name.replace('(img) ', '').replace(' (img)', ''), "captions.json")
+    if os.path.exists(dataset_captions_json_path):
+        try:
+            with open(dataset_captions_json_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def delete_captions_file(dataset_name: str) -> bool:
+    base_dir, _ = _get_dataset_base_dir(dataset_name) # Unpack the tuple
+    captions_file_path = os.path.join(base_dir, dataset_name.replace('(img) ', '').replace(' (img)', ''), "captions.json")
+    if os.path.exists(captions_file_path):
+        try:
+            os.remove(captions_file_path)
+            return True
+        except Exception:
+            return False
+    return False
+
+def validate_bucket_values(W_val, H_val, F_val) -> list[str]:
+    errors = []
+    if W_val is None or not isinstance(W_val, int) or W_val <= 0 or W_val % 32 != 0:
+        errors.append(f"Width ({W_val}) must be a positive integer divisible by 32.")
+    if H_val is None or not isinstance(H_val, int) or H_val <= 0 or H_val % 32 != 0:
+        errors.append(f"Height ({H_val}) must be a positive integer divisible by 32.")
+    # Adjusted validation for Frames based on typical dataset preprocessing requirements
+    if F_val is None or not isinstance(F_val, int) or F_val <= 0:
+         errors.append(f"Frames ({F_val}) must be a positive integer.")
+    # Special case: Allow 1 frame for images, otherwise validate as video (4n+1 and >=5)
+    if F_val is not None and F_val != 1:
+        if F_val < 5 or (F_val - 1) % 4 != 0:
+            errors.append(f"Frames ({F_val}) invalid (must be 1 for images or ≥5 and 4n+1 for videos).")
+    return errors
+
+def _get_dataset_base_dir(dataset_name: str) -> tuple[str, str]:
+    clean_name = dataset_name.replace('(img) ', '').replace(' (img)', '')
+    # Check if it's explicitly marked as image or if the folder exists in the image datasets directory
+    if dataset_name.startswith('(img) ') or dataset_name.endswith(' (img)') or \
+       os.path.exists(os.path.join(settings.DATASETS_IMG_DIR, clean_name)):
+        return settings.DATASETS_IMG_DIR, "image"
+    return settings.DATASETS_DIR, "video"
 
 #Helper to generate thumbnail for a video
 def regenerate_all_thumbnails_for_dataset(dataset_name):

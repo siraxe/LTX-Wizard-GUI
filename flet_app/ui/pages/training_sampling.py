@@ -9,7 +9,7 @@ import asyncio
 from .._styles import create_textfield, add_section_title,create_dropdown ,create_styled_button
 from settings import settings
 from loguru import logger 
-from ui.dataset_manager.dataset_layout_tab import _build_expansion_tile 
+from ui.dataset_manager.dataset_controls import build_expansion_tile
 import traceback # Import traceback
 
 # Global variables for Flet controls and state
@@ -501,7 +501,7 @@ def _build_sample_videos_section(page: ft.Page): # Added page
                                            expand=True, min_lines=10, max_lines=20, border_color=ft.Colors.BLUE_GREY_800,
                                            bgcolor=ft.Colors.BLACK12, color=ft.Colors.WHITE70)
 
-    return _build_expansion_tile(
+    return build_expansion_tile(
         title="Manual Video Sampling",
         controls=[
             ft.Text("Generate sample videos using selected prompts, images, and LoRA.", size=12, italic=True),
@@ -672,4 +672,3 @@ def run_manual_sample_video(page: ft.Page): # Changed from event `e` to `page`
         sampling_status_text.color = ft.Colors.GREEN_ACCENT_700
         try: sampling_status_text.update()
         except: pass
-

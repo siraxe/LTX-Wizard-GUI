@@ -6,6 +6,7 @@ from loguru import logger
 from PIL import Image
 import re
 import traceback # Import traceback for detailed error logging
+from ui.dataset_manager.dataset_utils import _get_dataset_base_dir # Import _get_dataset_base_dir
 
 # Initialize logger if not already set up
 try:
@@ -207,21 +208,21 @@ class TopBarUtils:
         dataset_type_for_yaml = "video" # Default to video
         
         if dataset_controls and hasattr(dataset_controls, 'get_selected_dataset'):
-            selected_display_name = dataset_controls.get_selected_dataset()
-            if selected_display_name:
-                # Check if display name starts with (img) prefix
-                is_img_dataset = selected_display_name.startswith('(img) ')
-                # Clean the dataset name by removing the image marker
-                clean_dataset_name = selected_display_name.replace('(img) ', '')
+            selected_clean_name = dataset_controls.get_selected_dataset() # This now returns the clean name
+            if selected_clean_name:
+                # Use _get_dataset_base_dir to correctly determine the base directory and type
+                base_dir_full_path, detected_dataset_type = _get_dataset_base_dir(selected_clean_name)
                 
-                if is_img_dataset:
-                    # Use datasets_img directory for image datasets
-                    dataset_path = os.path.join('workspace', 'datasets_img', clean_dataset_name, 'preprocessed_data').replace('\\', '/')
-                    dataset_type_for_yaml = "image"
+                # Extract the relative path from 'workspace'
+                if 'workspace' in base_dir_full_path:
+                    relative_base_dir = os.path.relpath(base_dir_full_path, 'workspace').replace('\\', '/')
                 else:
-                    dataset_path = os.path.join('workspace', 'datasets', clean_dataset_name, 'preprocessed_data').replace('\\', '/')
-                    dataset_type_for_yaml = "video"
-                selected_dataset_name_for_images = clean_dataset_name
+                    # Fallback if 'workspace' is not in path, though it should be for datasets
+                    relative_base_dir = os.path.basename(base_dir_full_path)
+                
+                dataset_path = os.path.join('workspace', relative_base_dir, selected_clean_name, 'preprocessed_data').replace('\\', '/')
+                dataset_type_for_yaml = detected_dataset_type
+                selected_dataset_name_for_images = selected_clean_name
                 
         if dataset_controls and hasattr(dataset_controls, 'get_num_workers'):
             try:

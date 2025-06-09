@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import json
 from .._styles import create_textfield, create_dropdown # Import helper functions
-from ..dataset_manager.dataset_layout_tab import get_dataset_folders, _get_dataset_base_dir  # Reuse the helper
+from ..dataset_manager.dataset_utils import get_dataset_folders, _get_dataset_base_dir  # Reuse the helper
 from settings import settings
 
 
@@ -15,7 +15,7 @@ def load_dataset_summary(dataset):
     """
     Loads summary statistics for a dataset: number of videos, captioned, processed, and total frames.
     """
-    if not dataset:
+    if not dataset or dataset == "Select your dataset": # Explicitly handle the problematic string
         return {
             "Files": 0,
             "Captioned": 0,
@@ -147,13 +147,24 @@ def build_training_dataset_page_content():
         dataset_dropdown = dataset_dropdown_ref.current
         prev_selected = selected_dataset["value"]
         if dataset_dropdown:
-            dataset_dropdown.options = [ft.dropdown.Option(name) for name in folders.keys()] if folders else []
+            # Rebuild options with correct key/text mapping
+            dropdown_options_map = {name: display_name for name, display_name in folders.items()}
+            dataset_dropdown.options = [ft.dropdown.Option(key=name, text=display_name) for name, display_name in dropdown_options_map.items()]
             dataset_dropdown.disabled = len(folders) == 0
-            if prev_selected and prev_selected in folders:
+            
+            # prev_selected now holds the clean name (or None)
+            if prev_selected and prev_selected in folders.keys(): # Check against clean names (keys)
                 dataset_dropdown.value = prev_selected
+                selected_dataset["value"] = prev_selected # Ensure selected_dataset also holds clean name
             else:
-                dataset_dropdown.value = None
-                selected_dataset["value"] = None
+                # If no previous valid selection, try to select the first available dataset
+                if folders:
+                    first_dataset_key = list(folders.keys())[0]
+                    dataset_dropdown.value = first_dataset_key
+                    selected_dataset["value"] = first_dataset_key
+                else:
+                    dataset_dropdown.value = None # No datasets available, clear selection
+                    selected_dataset["value"] = None
             dataset_dropdown.update()
         update_summary_row()
 
@@ -162,26 +173,19 @@ def build_training_dataset_page_content():
         Builds the top row controls: dataset dropdown, refresh button, and num workers field.
         """
         folders = get_dataset_folders()
-        # Add special key to include 'None' option
-        folders_with_none = {"__include_none__": True, **folders}
+        # Prepare options for dropdown: key is clean name, text is display name
+        dropdown_options_map = {name: display_name for name, display_name in folders.items()}
         dataset_dropdown = create_dropdown(
             "Select dataset",
-            selected_dataset["value"],
-            folders_with_none,
+            selected_dataset["value"], # This should store the clean name
+            dropdown_options_map,
             hint_text="Select your dataset",
             expand=True
         )
         dataset_dropdown_ref.current = dataset_dropdown
         dataset_dropdown.disabled = len(folders) == 0
         def on_dataset_change(e):
-            folders = get_dataset_folders() # Get the folders mapping (clean_name: display_name)
-            selected_key = e.control.value # This is the clean name (e.g., "capped")
-            
-            if selected_key:
-                # Look up the display name using the key
-                selected_dataset["value"] = folders.get(selected_key, selected_key) # Use display name
-            else:
-                selected_dataset["value"] = None
+            selected_dataset["value"] = e.control.value if e.control.value else None
             update_summary_row()
         dataset_dropdown.on_change = on_dataset_change
         update_button = ft.IconButton(
@@ -324,29 +328,24 @@ def build_training_dataset_page_content():
     # Add set_selected_dataset method
     def set_selected_dataset(dataset_name, page_ctx=None):
         dropdown = dataset_dropdown_ref.current
-        folders = get_dataset_folders()
+        folders = get_dataset_folders() # Get the clean_name: display_name map
 
-        if dataset_name is None or (dataset_name not in folders):
+        # dataset_name passed to this function should be the clean name
+        if dataset_name is None or (dataset_name not in folders.keys()):
             selected_dataset["value"] = None
             if dropdown:
-                dropdown.value = ""  # Key for "None"
-                if dropdown.page: # Check if control is on the page
-                    # Try explicitly clearing any displayed text if hint_text might interfere
-                    # dropdown.hint_text = "None" # Temporarily change hint, or set to current selection text
-                    # dropdown.selected_index = None # Try to force deselection if value="" isn't enough
-                    
+                dropdown.value = ""  # Key for "None" option
+                if dropdown.page:
                     dropdown.update()
-                    if page_ctx: # If page context is available, try a broader update
+                    if page_ctx:
                         page_ctx.update()
-        elif dataset_name in folders: # dataset_name is not None and is valid (this is the clean name)
-            # Store the display name (e.g., "(img) capped") in selected_dataset["value"]
-            selected_dataset["value"] = folders[dataset_name] 
+        elif dataset_name in folders.keys(): # dataset_name is not None and is a valid clean name
+            selected_dataset["value"] = dataset_name # Store the clean name
             if dropdown:
-                # The dropdown's value should still be the key (clean name) for it to display correctly
-                dropdown.value = str(dataset_name) 
-                if dropdown.page: # Check if control is on the page
+                dropdown.value = str(dataset_name) # Set dropdown value to the clean name (key)
+                if dropdown.page:
                     dropdown.update()
-                    if page_ctx: # If page context is available, try a broader update
+                    if page_ctx:
                         page_ctx.update()
         
         update_summary_row()
