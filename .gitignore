@@ -35,6 +35,7 @@ workspace/thumbnails_img/
 flet_app/ui/utils/recent_files.txt
 flet_app/assets/config_to_train.yaml
 flet_app/ffmpeg/
+flet_app/ffmpeg-master-latest-win64-gpl/
 
 scripts_fp8/*
 src/ltxv_trainer_fp8/*

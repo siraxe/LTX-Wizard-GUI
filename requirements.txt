@@ -23,6 +23,7 @@ pre-commit==4.2.0
 ruff==0.11.9
 hatchling==1.27.0
 matplotlib
+flet[all]
 
 # Pip-specific dependencies from environment.yml
 optimum-quanto==0.2.7
