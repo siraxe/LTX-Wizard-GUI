@@ -163,12 +163,12 @@ def load_tokenizer() -> T5Tokenizer:
     download_destination_parent = LOCAL_MODELS_CACHE / (repo_id.replace("/", "--") + f"--{subfolder}-root")
     actual_model_files_dir = download_destination_parent / subfolder
 
-    spiece_model_path = actual_model_files_dir / "spiece.model"
     try:
-        # Attempt to load from the specific spiece.model file
+        # Attempt to load from the directory
         return T5Tokenizer.from_pretrained(
-            str(spiece_model_path),
+            str(actual_model_files_dir),
             local_files_only=True,
+            legacy=False,
         )
     except (OSError, HFValidationError):
         # If loading from local files fails, download them
@@ -178,10 +178,11 @@ def load_tokenizer() -> T5Tokenizer:
             local_dir=download_destination_parent,
             local_dir_use_symlinks=False,
         )
-        # After download, try loading again from the specific spiece.model file
+        # After download, try loading again from the directory
         return T5Tokenizer.from_pretrained(
-            str(spiece_model_path),
+            str(actual_model_files_dir),
             local_files_only=True,
+            legacy=False,
         )
 
 
