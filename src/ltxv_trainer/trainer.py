@@ -43,6 +43,7 @@ from torch.optim.lr_scheduler import (
     PolynomialLR,
     StepLR,
 )
+from torch.nn.parallel import DistributedDataParallel # Added for DDP compatibility
 from torch.utils.data import DataLoader
 
 from ltxv_trainer.config import LtxvTrainerConfig
@@ -82,6 +83,8 @@ class TrainingStats(BaseModel):
     steps_per_second: float
     samples_per_second: float
     peak_gpu_memory_gb: float
+    global_batch_size: int # Added
+    num_processes: int # Added
 
 
 class LtxvTrainer:
@@ -93,9 +96,10 @@ class LtxvTrainer:
         self._num_processes = self._accelerator.num_processes
         self._load_models()
         self._compile_transformer()
-        self._setup_block_swap() # Call after model loading and compilation
+        # self._setup_block_swap() # Removed: Call after model loading and compilation
         self._collect_trainable_params()
         self._load_checkpoint()
+        self._prepare_models_for_training() # Added
         self._dataset = None
         self._global_step = -1
         self._checkpoint_paths = []
@@ -105,7 +109,7 @@ class LtxvTrainer:
         self._lowest_avg_loss_history = [] # Initialize lowest 5 average loss history list
         self._lowest_avg_loss_steps = [] # Initialize lowest 5 average loss steps list
         self._highest_avg_loss_history = [] # Initialize highest 5 average loss history list
-        self._highest_avg_loss_steps = [] # Initialize highest 5 average loss steps list
+        self._highest_avg_loss_steps = [] # Initialize highest 5 average loss history list
 
     def _setup_block_swap(self) -> None:
         """
@@ -491,7 +495,7 @@ class LtxvTrainer:
 
     def _load_models(self) -> None:
         """Load the LTXV model components."""
-        prepare = self._accelerator.prepare
+        # prepare = self._accelerator.prepare # Removed
 
         # Load all model components using the new loader
         transformer_dtype = torch.bfloat16 if self._config.model.training_mode == "lora" else torch.float32
@@ -505,8 +509,8 @@ class LtxvTrainer:
         # Prepare components with accelerator
         self._scheduler = components.scheduler
         self._tokenizer = components.tokenizer
-        self._text_encoder = prepare(components.text_encoder, device_placement=[False])
-        self._vae = prepare(components.vae, device_placement=[False])
+        self._text_encoder = components.text_encoder # Changed
+        self._vae = components.vae # Changed
         transformer = components.transformer
 
         if self._config.acceleration.quantization is not None:
@@ -519,16 +523,16 @@ class LtxvTrainer:
                 precision=self._config.acceleration.quantization,
             )
 
-        self._transformer = prepare(transformer)
+        self._transformer = transformer # Changed
 
         # Freeze all models. We later unfreeze the transformer based on training mode.
         self._text_encoder.requires_grad_(False)
         self._vae.requires_grad_(False)
         self._transformer.requires_grad_(False)
 
-        # Enable gradient checkpointing if requested
-        if self._config.optimization.enable_gradient_checkpointing:
-            self._transformer.enable_gradient_checkpointing()
+        # Removed: Enable gradient checkpointing if requested
+        # if self._config.optimization.enable_gradient_checkpointing:
+        #     self._transformer.enable_gradient_checkpointing()
 
     # noinspection PyProtectedMember,PyUnresolvedReferences
     def _compile_transformer(self) -> None:
@@ -603,6 +607,32 @@ class LtxvTrainer:
             _, unexpected_keys = transformer.load_state_dict(state_dict, strict=False)
             if unexpected_keys:
                 raise ValueError(f"Failed to load some LoRA weights: {unexpected_keys}")
+
+    def _prepare_models_for_training(self) -> None: # Added
+        """Prepare models for training with Accelerate.""" # Added
+        from torch.nn.parallel import DistributedDataParallel # Added
+        # Prepare and move models to the correct devices # Added
+        prepare = self._accelerator.prepare # Added
+        self._vae = prepare(self._vae).to("cpu") # Added
+        self._transformer = prepare(self._transformer) # Added
+        self._text_encoder = prepare(self._text_encoder) # Added
+
+        if not self._config.acceleration.load_text_encoder_in_8bit: # Added
+            self._text_encoder = self._text_encoder.to("cpu") # Added
+
+        # Enable gradient checkpointing on the base model if requested # Added
+        if self._config.optimization.enable_gradient_checkpointing: # Added
+            model = self._transformer # Added
+            if isinstance(model, DistributedDataParallel): # Added
+                model = model.module # Added
+            # Use Hugging Face's API if available # Added
+            if hasattr(model, "gradient_checkpointing_enable"): # Added
+                model.gradient_checkpointing_enable() # Added
+            elif hasattr(model, "enable_gradient_checkpointing"): # Added
+                model.enable_gradient_checkpointing() # Added
+            else: # Added
+                logger.warning("Model does not support gradient checkpointing.") # Added
+
 
     @staticmethod
     def _find_checkpoint(checkpoint_path: str | Path) -> Path | None:
@@ -741,6 +771,11 @@ class LtxvTrainer:
             mixed_precision=self._config.acceleration.mixed_precision_mode,
             gradient_accumulation_steps=self._config.optimization.gradient_accumulation_steps,
         )
+        # Added logging for distributed training
+        if self._accelerator.num_processes > 1:
+            logger.info(f"Distributed training enabled with {self._accelerator.num_processes} processes")
+            logger.info(f"Local batch size: {self._config.optimization.batch_size}")
+            logger.info(f"Global batch size: {self._config.optimization.batch_size * self._accelerator.num_processes}")
 
     @torch.no_grad()
     @torch.compiler.set_stance("force_eager")
@@ -750,29 +785,18 @@ class LtxvTrainer:
         self._vae.to(self._accelerator.device)
         # Model is already in the correct device if loaded in 8-bit.
         if not self._config.acceleration.load_text_encoder_in_8bit:
-            self._text_encoder.to(self._accelerator.device)
+            self._text_encoder.to("cpu") # Changed from self._accelerator.device
 
         use_images = self._config.validation.images is not None
 
-        if use_images:
-            # If images are provided, use the first one for all prompts.
-            # The image path will be taken from self._config.validation.images[0]
-            # The strict length check is removed to allow one image for multiple prompts.
-            pipeline = LTXImageToVideoPipeline(
-                scheduler=deepcopy(self._scheduler),
-                vae=self._vae,
-                text_encoder=self._text_encoder,
-                tokenizer=self._tokenizer,
-                transformer=self._transformer,
-            )
-        else:
-            pipeline = LTXPipeline(
-                scheduler=deepcopy(self._scheduler),
-                vae=self._vae,
-                text_encoder=self._text_encoder,
-                tokenizer=self._tokenizer,
-                transformer=self._transformer,
-            )
+        pipeline_class = LTXImageToVideoPipeline if use_images else LTXPipeline # Added
+        pipeline = pipeline_class( # Changed
+            scheduler=deepcopy(self._scheduler),
+            vae=self._accelerator.unwrap_model(self._vae), # Changed
+            text_encoder=self._accelerator.unwrap_model(self._text_encoder), # Changed
+            tokenizer=self._tokenizer,
+            transformer=self._accelerator.unwrap_model(self._transformer), # Changed
+        )
         pipeline.set_progress_bar_config(disable=True)
 
         # Create a task in the sampling progress
@@ -851,7 +875,7 @@ class LtxvTrainer:
                 self._lowest_avg_loss_steps.append(self._global_step)
 
                 self._highest_avg_loss_history.append(highest_5_avg)
-                self._highest_avg_loss_steps.append(self._global_step)
+                self._highest_avg_loss_steps.append(highest_5_avg)
             else:
                 logger.warning(f"Not enough data points ({len(last_losses)}) in window ({window_size}) to calculate lowest/highest 5 average.")
 
@@ -876,14 +900,20 @@ class LtxvTrainer:
     @staticmethod
     def _log_training_stats(stats: TrainingStats) -> None:
         """Log training statistics."""
-        logger.info("📊 Training Statistics:")
-        logger.info(f"Total time: {stats.total_time_seconds / 60:.1f} minutes")
-        logger.info(f"Training time: {stats.training_time / 60:.1f} minutes")
+        stats_str = ( # Changed
+            "📊 Training Statistics:\n"
+            f" - Total time: {stats.total_time_seconds / 60:.1f} minutes\n"
+            f" - Training time: {stats.training_time / 60:.1f} minutes\n"
+            f" - Training speed: {stats.steps_per_second:.2f} steps/second\n"
+            f" - Samples/second: {stats.samples_per_second:.2f}\n"
+            f" - Peak GPU memory: {stats.peak_gpu_memory_gb:.2f} GB"
+        )
         if stats.compilation_time_seconds is not None:
-            logger.info(f"Compilation time: {stats.compilation_time_seconds:.1f} seconds")
-        logger.info(f"Training speed: {stats.steps_per_second:.2f} steps/second")
-        logger.info(f"Samples/second: {stats.samples_per_second:.2f}")
-        logger.info(f"Peak GPU memory: {stats.peak_gpu_memory_gb:.2f} GB")
+            stats_str += f"\n - Compilation time: {stats.compilation_time_seconds:.1f} seconds\n"
+        if stats.num_processes > 1: # Added
+            stats_str += f"\n - Number of processes: {stats.num_processes}\n" # Added
+            stats_str += f" - Global batch size: {stats.global_batch_size}" # Added
+        logger.info(stats_str) # Changed
 
     def _save_checkpoint(self) -> Path:
         """Save the model weights."""
