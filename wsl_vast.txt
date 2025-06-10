@@ -1,0 +1,65 @@
+
+USE NVIDIA 12.8.1 image !!!!
+cd workspace/LWG/workspace/output/nn/checkpoints
+rm -r lora_weights_step_00010.safetensors
+
+
+::CLONE
+git clone https://github.com/siraxe/LTX-Wizard-GUI.git LWG
+
+:: Version check
+clear
+nvidia-smi
+nvcc --version
+
+::::::::::::::::::
+::::MAIN PART
+::::::::::::::::::
+
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+chmod +x Miniconda3-latest-Linux-x86_64.sh
+./Miniconda3-latest-Linux-x86_64.sh -p ~/miniconda3
+
+source ~/.bashrc
+conda create --prefix ./venv_wsl python=3.12
+conda activate ./venv_wsl
+
+pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+pip3 install -r ./LWG/requirements.txt
+pip install -e ./LWG
+
+
+:: AFTER
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+chmod +x Miniconda3-latest-Linux-x86_64.sh
+./Miniconda3-latest-Linux-x86_64.sh -b -p ~/miniconda3
+source ~/miniconda3/bin/activate
+
+cd workspace
+conda activate ./venv_wsl
+cd LWG
+
+python -c "import torch; print(torch.cuda.get_device_capability())"
+export TORCH_CUDA_ARCH_LIST="12.0"
+echo $TORCH_CUDA_ARCH_LIST
+
+python ./scripts/train.py ./workspace/configs/n_s1.yaml --num_processes 1
+python ./scripts/train_distributed.py ./workspace/configs/n_s1.yaml --num_processes 8
+python ./scripts/train_distributed.py ./workspace/configs/n_s1.yaml
+
+
+python ./scripts/train.py ./workspace/configs/nn.yaml --num_processes 1
+
+
+
+
+
+
+
+
+
+
+
+
+
+

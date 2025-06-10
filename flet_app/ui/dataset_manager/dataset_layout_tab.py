@@ -17,7 +17,7 @@ from ui.dataset_manager.dataset_actions import (
     on_change_fps_click, on_rename_files_click, on_bucket_or_model_change,
     on_add_captions_click_with_model, stop_captioning, on_delete_captions_click,
     perform_delete_captions, on_preprocess_dataset_click,
-    apply_affix_from_textfield, find_and_replace_in_captions
+    apply_affix_from_textfield, find_and_replace_in_captions, on_caption_to_json_click, on_caption_to_txt_click
 )
 from ui.dataset_manager.dataset_controls import build_expansion_tile
 from ui.flet_hotkeys import is_d_key_pressed_global # Import global D key state
@@ -415,7 +415,8 @@ def _build_latent_test_section(update_thumbnails_func):
         initially_expanded=False,
     )
 
-def _build_batch_section(change_fps_section: ft.ResponsiveRow, rename_textfield: ft.TextField, rename_files_button: ft.ElevatedButton):
+def _build_batch_section(change_fps_section: ft.ResponsiveRow, rename_textfield: ft.TextField, rename_files_button: ft.ElevatedButton,
+                         caption_to_txt_button: ft.ElevatedButton,caption_to_json_button:  ft.ElevatedButton):
     return build_expansion_tile(
         title="Batch files",
         controls=[
@@ -423,6 +424,11 @@ def _build_batch_section(change_fps_section: ft.ResponsiveRow, rename_textfield:
             ft.Divider(thickness=1),
             rename_textfield,
             rename_files_button,
+            ft.Divider(thickness=1),
+            ft.ResponsiveRow([
+                ft.Container(content=caption_to_txt_button, expand=True,col=6, alignment=ft.alignment.center),
+                ft.Container(content=caption_to_json_button, expand=True,col=6, alignment=ft.alignment.center)
+            ])
         ],
         initially_expanded=False,
     )
@@ -583,6 +589,26 @@ def dataset_tab_layout(page=None):
         button_style=BTN_STYLE2
     )
 
+    caption_to_json_button = create_styled_button(
+        "txt > json",
+        tooltip="txt > json",
+        expand=True,
+        on_click=lambda e: e.page.run_task(on_caption_to_json_click,
+            e, selected_dataset, DATASETS_TYPE, update_thumbnails, thumbnails_grid_ref
+        ),
+        button_style=BTN_STYLE2
+    )
+
+    caption_to_txt_button = create_styled_button(
+        "json > txt",
+        tooltip="json > txt",
+        expand=True,
+        on_click=lambda e: e.page.run_task(on_caption_to_txt_click,
+            e, selected_dataset, DATASETS_TYPE
+        ),
+        button_style=BTN_STYLE2
+    )
+
     update_button_control.on_click = lambda e: reload_current_dataset(
         e.page,
         dataset_dropdown_control_ref.current,
@@ -659,14 +685,15 @@ def dataset_tab_layout(page=None):
 
     latent_test_section = _build_latent_test_section(update_thumbnails)
 
-    batch_section = _build_batch_section(change_fps_section, rename_textfield, rename_files_button)
+    batch_section = _build_batch_section(change_fps_section, rename_textfield, rename_files_button,caption_to_txt_button,
+        caption_to_json_button)
 
     lc_content = ft.Column([
         dataset_selection_section,
         captioning_section,
         preprocessing_section,
         latent_test_section,
-        batch_section,
+        batch_section
     ], spacing=3, width=200, alignment=ft.MainAxisAlignment.START)
 
     bottom_app_bar = _build_bottom_status_bar()

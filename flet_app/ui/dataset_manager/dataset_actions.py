@@ -514,10 +514,22 @@ async def on_rename_files_click(e: ft.ControlEvent, selected_dataset_ref, DATASE
     for old_name, new_name in zip(files_to_rename, new_names):
         old_path = os.path.join(source_dir, old_name)
         new_path = os.path.join(source_dir, new_name)
+        
+        old_base, old_ext = os.path.splitext(old_name)
+        new_base, new_ext = os.path.splitext(new_name)
+
         try:
             os.rename(old_path, new_path)
             old_to_new[old_name] = new_name
             print(f"[DEBUG] Renamed {old_name} to {new_name}")
+
+            # Check for and rename corresponding .txt file
+            old_txt_path = os.path.join(source_dir, f"{old_base}.txt")
+            new_txt_path = os.path.join(source_dir, f"{new_base}.txt")
+            if os.path.exists(old_txt_path):
+                os.rename(old_txt_path, new_txt_path)
+                print(f"[DEBUG] Renamed {os.path.basename(old_txt_path)} to {os.path.basename(new_txt_path)}")
+
         except Exception as ex:
             renaming_successful = False
             error_msg = f"Failed to rename {old_name} to {new_name}: {ex}"
@@ -1015,6 +1027,112 @@ async def on_preprocess_dataset_click(e: ft.ControlEvent,
             set_bottom_app_bar_height_func,
             on_success_callback=lambda: update_thumbnails_func(page_ctx=e.page, grid_control=thumbnails_grid_control, force_refresh=True) # Force refresh after preprocessing
         )
+
+async def on_caption_to_json_click(e: ft.ControlEvent, selected_dataset_ref, DATASETS_TYPE_ref, update_thumbnails_func, thumbnails_grid_ref_obj):
+    current_dataset_name = selected_dataset_ref.get("value")
+    if not current_dataset_name:
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text("Error: No dataset selected."), open=True)
+            e.page.update()
+        return
+
+    dataset_type = DATASETS_TYPE_ref["value"]
+    base_dir, _ = _get_dataset_base_dir(current_dataset_name)
+    clean_dataset_name = current_dataset_name.replace(' (img)', '').replace('(img) ', '')
+    dataset_folder_path = os.path.abspath(os.path.join(base_dir, clean_dataset_name))
+    captions_json_path = os.path.join(dataset_folder_path, "captions.json")
+
+    try:
+        if os.path.exists(captions_json_path):
+            with open(captions_json_path, 'r', encoding='utf-8') as f:
+                captions_data = json.load(f)
+            if not isinstance(captions_data, list):
+                captions_data = []
+        else:
+            captions_data = []
+
+        media_files, _ = get_videos_and_thumbnails(current_dataset_name, dataset_type)
+        
+        captions_dict = {os.path.basename(item['media_path']): item for item in captions_data if 'media_path' in item}
+
+        updated_count = 0
+        for media_path in media_files:
+            base_filename, _ = os.path.splitext(os.path.basename(media_path))
+            txt_caption_path = os.path.join(dataset_folder_path, f"{base_filename}.txt")
+
+            if os.path.exists(txt_caption_path):
+                with open(txt_caption_path, 'r', encoding='utf-8') as f:
+                    caption_text = f.read().strip()
+                
+                media_basename = os.path.basename(media_path)
+                if media_basename in captions_dict:
+                    captions_dict[media_basename]['caption'] = caption_text
+                else:
+                    captions_dict[media_basename] = {
+                        "media_path": media_basename,
+                        "caption": caption_text
+                    }
+                updated_count += 1
+
+        with open(captions_json_path, 'w', encoding='utf-8') as f:
+            json.dump(list(captions_dict.values()), f, indent=4)
+
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Updated {updated_count} captions in captions.json from .txt files."), open=True)
+            update_thumbnails_func(page_ctx=e.page, grid_control=thumbnails_grid_ref_obj.current, force_refresh=True)
+            e.page.update()
+
+    except Exception as ex:
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"An error occurred: {ex}"), open=True)
+            e.page.update()
+
+async def on_caption_to_txt_click(e: ft.ControlEvent, selected_dataset_ref, DATASETS_TYPE_ref):
+    current_dataset_name = selected_dataset_ref.get("value")
+    if not current_dataset_name:
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text("Error: No dataset selected."), open=True)
+            e.page.update()
+        return
+
+    base_dir, _ = _get_dataset_base_dir(current_dataset_name)
+    clean_dataset_name = current_dataset_name.replace(' (img)', '').replace('(img) ', '')
+    dataset_folder_path = os.path.abspath(os.path.join(base_dir, clean_dataset_name))
+    captions_json_path = os.path.join(dataset_folder_path, "captions.json")
+
+    if not os.path.exists(captions_json_path):
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text("captions.json not found."), open=True)
+            e.page.update()
+        return
+
+    try:
+        with open(captions_json_path, 'r', encoding='utf-8') as f:
+            captions_data = json.load(f)
+
+        if not isinstance(captions_data, list):
+            if e.page:
+                e.page.snack_bar = ft.SnackBar(content=ft.Text("captions.json is not a list."), open=True)
+                e.page.update()
+            return
+
+        created_count = 0
+        for item in captions_data:
+            if 'media_path' in item and 'caption' in item:
+                base_filename, _ = os.path.splitext(item['media_path'])
+                txt_path = os.path.join(dataset_folder_path, f"{base_filename}.txt")
+                with open(txt_path, 'w', encoding='utf-8') as f:
+                    f.write(item['caption'])
+                created_count += 1
+
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Created {created_count} .txt files from captions.json."), open=True)
+            e.page.update()
+
+    except Exception as ex:
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"An error occurred: {ex}"), open=True)
+            e.page.update()
 
 async def apply_affix_from_textfield(e: ft.ControlEvent, affix_type: str, selected_dataset_ref, DATASETS_TYPE_ref, update_thumbnails_func, thumbnails_grid_ref_obj, affix_text_field_ref: ft.Ref[ft.TextField]):
     if not selected_dataset_ref["value"]:
