@@ -608,30 +608,32 @@ class LtxvTrainer:
             if unexpected_keys:
                 raise ValueError(f"Failed to load some LoRA weights: {unexpected_keys}")
 
-    def _prepare_models_for_training(self) -> None: # Added
-        """Prepare models for training with Accelerate.""" # Added
-        from torch.nn.parallel import DistributedDataParallel # Added
-        # Prepare and move models to the correct devices # Added
-        prepare = self._accelerator.prepare # Added
-        self._vae = prepare(self._vae).to("cpu") # Added
-        self._transformer = prepare(self._transformer) # Added
-        self._text_encoder = prepare(self._text_encoder) # Added
+    def _prepare_models_for_training(self) -> None:
+        """Prepare models for training with Accelerate."""
+        from torch.nn.parallel import DistributedDataParallel
+        # Only prepare the transformer for distributed training
+        self._transformer = self._accelerator.prepare(self._transformer)
 
-        if not self._config.acceleration.load_text_encoder_in_8bit: # Added
-            self._text_encoder = self._text_encoder.to("cpu") # Added
+        # VAE and Text Encoder are not part of the distributed training loop
+        # and should remain on CPU unless temporarily moved for sampling.
+        # Their initial device placement is handled by model_loader.py.
+        # Ensure they are on CPU if not loaded in 8-bit (which puts them on GPU).
+        if not self._config.acceleration.load_text_encoder_in_8bit:
+            self._text_encoder = self._text_encoder.to("cpu")
+        self._vae = self._vae.to("cpu") # Ensure VAE is on CPU
 
-        # Enable gradient checkpointing on the base model if requested # Added
-        if self._config.optimization.enable_gradient_checkpointing: # Added
-            model = self._transformer # Added
-            if isinstance(model, DistributedDataParallel): # Added
-                model = model.module # Added
-            # Use Hugging Face's API if available # Added
-            if hasattr(model, "gradient_checkpointing_enable"): # Added
-                model.gradient_checkpointing_enable() # Added
-            elif hasattr(model, "enable_gradient_checkpointing"): # Added
-                model.enable_gradient_checkpointing() # Added
-            else: # Added
-                logger.warning("Model does not support gradient checkpointing.") # Added
+        # Enable gradient checkpointing on the base model if requested
+        if self._config.optimization.enable_gradient_checkpointing:
+            model = self._transformer
+            if isinstance(model, DistributedDataParallel):
+                model = model.module
+            # Use Hugging Face's API if available
+            if hasattr(model, "gradient_checkpointing_enable"):
+                model.gradient_checkpointing_enable()
+            elif hasattr(model, "enable_gradient_checkpointing"):
+                model.enable_gradient_checkpointing()
+            else:
+                logger.warning("Model does not support gradient checkpointing.")
 
 
     @staticmethod
