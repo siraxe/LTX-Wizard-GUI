@@ -514,16 +514,14 @@ class LtxvTrainer:
         transformer = components.transformer
 
         if self._config.acceleration.quantization is not None:
-            if self._accelerator.num_processes > 1:
-                logger.warning("Quantization is not supported in distributed training. Disabling quantization.")
-            elif self._config.model.training_mode == "full":
+            if self._config.model.training_mode == "full":
                 raise ValueError("Quantization is not supported in full training mode.")
-            else:
-                logger.warning(f"Quantizing model with precision: {self._config.acceleration.quantization}")
-                transformer = quantize_model(
-                    transformer,
-                    precision=self._config.acceleration.quantization,
-                )
+
+            logger.warning(f"Quantizing model with precision: {self._config.acceleration.quantization}")
+            transformer = quantize_model(
+                transformer,
+                precision=self._config.acceleration.quantization,
+            )
 
         self._transformer = transformer
 
