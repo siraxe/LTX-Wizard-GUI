@@ -605,8 +605,7 @@ def dataset_tab_layout(page=None):
         processed_progress_bar,
         processed_output_field,
         set_bottom_app_bar_height,
-        update_thumbnails,
-        thumbnails_grid_control # Add this argument
+        update_thumbnails
     )
     dataset_delete_captions_button_control.on_click = lambda e: on_delete_captions_click(
         e,

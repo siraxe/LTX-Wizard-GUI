@@ -72,8 +72,11 @@ def build_caption_command(
         command += " --use-8bit"
 
     # Ensure instruction and max_new_tokens are included
-    command += f' --instruction "{instruction}"'
-    command += f' --max-new_tokens {max_new_tokens}'
+    # Use json.dumps to properly escape the instruction string for the shell
+    # This will add outer quotes and escape any internal quotes.
+    escaped_instruction = json.dumps(instruction)
+    command += f' --instruction {escaped_instruction}'
+    command += f' --max-new-tokens {max_new_tokens}'
 
     return command
 
@@ -691,7 +694,8 @@ async def on_add_captions_click_with_model(e: ft.ControlEvent,
             selected_dataset_ref,
             processed_progress_bar_ref,
             processed_output_field_ref,
-            set_bottom_app_bar_height_func
+            set_bottom_app_bar_height_func,
+            update_thumbnails_func
         )
         return
 
@@ -738,7 +742,8 @@ async def on_add_captions_click_with_model(e: ft.ControlEvent,
         selected_dataset_ref,
         processed_progress_bar_ref,
         processed_output_field_ref,
-        set_bottom_app_bar_height_func
+        set_bottom_app_bar_height_func,
+        update_thumbnails_func
     )
     dataset_delete_captions_button_control.tooltip = "Stop captioning process"
     dataset_delete_captions_button_control.disabled = False
@@ -769,7 +774,8 @@ def stop_captioning(e: ft.ControlEvent,
                     selected_dataset_ref,
                     processed_progress_bar_ref,
                     processed_output_field_ref,
-                    set_bottom_app_bar_height_func):
+                    set_bottom_app_bar_height_func,
+                    update_thumbnails_func):
     # Try to kill by PID file (more reliable for spawned processes)
     pid_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../scripts/caption_pid.txt')
     killed = False
