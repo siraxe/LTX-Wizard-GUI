@@ -773,9 +773,13 @@ class LtxvTrainer:
 
     def _setup_accelerator(self) -> None:
         """Initialize the Accelerator with the appropriate settings."""
+        from accelerate.utils import DistributedDataParallelKwargs
+
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
         self._accelerator = Accelerator(
             mixed_precision=self._config.acceleration.mixed_precision_mode,
             gradient_accumulation_steps=self._config.optimization.gradient_accumulation_steps,
+            kwargs_handlers=[ddp_kwargs],
         )
         # Added logging for distributed training
         if self._accelerator.num_processes > 1:
