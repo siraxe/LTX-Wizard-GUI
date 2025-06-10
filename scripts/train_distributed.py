@@ -72,6 +72,9 @@ def main(
     if num_processes > 1:
         launch_args.append("--multi_gpu")
     launch_args.extend(["--num_processes", str(num_processes)])
+    launch_args.extend(["--num_machines", "1"])
+    launch_args.extend(["--mixed_precision", "bf16"])
+    launch_args.extend(["--dynamo_backend", "no"])
     if main_process_port is not None:
         launch_args.extend(["--main_process_port", str(main_process_port)])
     # Add the actual training script and its args
