@@ -96,7 +96,7 @@ class LtxvTrainer:
         self._num_processes = self._accelerator.num_processes
         self._load_models()
         self._compile_transformer()
-        # self._setup_block_swap() # Removed: Call after model loading and compilation
+        self._setup_block_swap()
         self._collect_trainable_params()
         self._load_checkpoint()
         self._prepare_models_for_training() # Added
@@ -523,7 +523,11 @@ class LtxvTrainer:
                 precision=self._config.acceleration.quantization,
             )
 
-        self._transformer = transformer # Changed
+        self._transformer = transformer
+
+        # Ensure all parameters are contiguous, which is required for DDP
+        for param in self._transformer.parameters():
+            param.data = param.data.contiguous()
 
         # Freeze all models. We later unfreeze the transformer based on training mode.
         self._text_encoder.requires_grad_(False)
