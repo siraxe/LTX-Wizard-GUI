@@ -1,0 +1,80 @@
+# Plan for DeepSpeed Integration in LTXV Trainer
+
+This plan outlines the steps to integrate DeepSpeed for multi-GPU training into the LTXV trainer. The primary goal is to leverage DeepSpeed's capabilities for memory optimization and distributed training, building upon the existing `src/ltxv_trainer/trainer.py` and implementing the DeepSpeed-specific logic in `src/ltxv_trainer/trainer_deep.py`.
+
+## 1. Initial Setup and Dependencies
+
+*   **Verify DeepSpeed Installation:** Ensure DeepSpeed is correctly installed in the environment. (This is assumed to be handled by the user's environment setup, but will be a prerequisite for execution).
+*   **Review DeepSpeed Documentation:** Familiarize with DeepSpeed's core concepts, particularly `deepspeed.initialize`, ZeRO optimization stages, and distributed training launch.
+
+## 2. Core DeepSpeed Integration in `src/ltxv_trainer/trainer_deep.py`
+
+The `trainer_deep.py` file will contain the DeepSpeed-specific implementation. It will likely inherit from or adapt the structure of `trainer.py`.
+
+### 2.1. Class Structure and Initialization (COMPLETED)
+*   **Import DeepSpeed:** Added `import deepspeed` and `import argparse` to `trainer_deep.py`.
+*   **DeepSpeed Arguments:** Logic for parsing DeepSpeed arguments is now handled in `scripts/train_deepspeed.py` and passed to `LtxvTrainerConfig`.
+*   **`__init__` Method:**
+    *   Refactored `__init__` to first initialize `Accelerator` for general utilities, then load raw models, compile, setup block swap, collect trainable params, initialize raw optimizer and scheduler, and finally call a new `_setup_deepspeed` method to initialize DeepSpeed.
+    *   `_setup_deepspeed` method created to handle `deepspeed.initialize(...)` which wraps the model, optimizer, and data loader.
+    *   `model_engine`, `optimizer`, and `lr_scheduler` are now instance variables managed by DeepSpeed.
+    *   `_load_models` and `_collect_trainable_params` methods were adapted to work with the raw model before DeepSpeed wrapping.
+
+### 2.2. Training Loop Adaptation (COMPLETED)
+*   **`train` Method:**
+    *   The overall structure of the `train` method remains similar.
+    *   **Forward Pass:** Calls `self._model_engine` for the forward pass.
+    *   **Backward Pass:** Uses `self._model_engine.backward(loss)`. DeepSpeed handles gradient accumulation and reduction.
+    *   **Optimizer Step:** Uses `self._model_engine.step()`.
+    *   **Gradient Clipping:** DeepSpeed handles gradient clipping internally if configured in the DeepSpeed config.
+    *   **Learning Rate Scheduler:** The DeepSpeed-wrapped scheduler is stepped.
+    *   **Synchronization:** `self._accelerator.wait_for_everyone()` is kept for general synchronization, while DeepSpeed manages internal distributed synchronization.
+    *   The data loading loop now iterates directly over `self._data_loader` (which is DeepSpeed's wrapped data loader).
+
+### 2.3. Checkpointing and Saving (COMPLETED)
+*   **`_save_checkpoint` Method:**
+    *   For "full" training mode, it uses `self._model_engine.save_checkpoint` to save the full model, optimizer, and LR scheduler states.
+    *   For "lora" mode, it extracts the PEFT state dict from `self._model_engine.module` and saves it using `LTXPipeline.save_lora_weights`.
+    *   `_cleanup_checkpoints` was updated to correctly remove DeepSpeed's directory-based checkpoints for "full" mode and `.safetensors` files for "lora" mode.
+
+### 2.4. Model Loading and Preparation (COMPLETED)
+*   **`_load_models` Method:**
+    *   Initial loading of `transformer`, `text_encoder`, and `vae` remains similar, but they are not prepared by `accelerator` as DeepSpeed handles device placement for the main model.
+    *   `_load_checkpoint` was updated to correctly load DeepSpeed checkpoints (directories) for "full" training and `.safetensors` files for "lora" training into the appropriate model (`self._model_engine` or `self._model_engine.module`).
+
+### 2.5. Validation and Sampling (COMPLETED)
+*   **`_sample_videos` Method:**
+    *   The model is unwrapped for inference using `self._model_engine.module` and set to `eval()` mode.
+    *   `vae` and `text_encoder` are explicitly moved to the accelerator device for sampling and then back to CPU.
+    *   The model is set back to `train()` mode after sampling.
+
+## 3. Configuration Management (COMPLETED)
+
+*   **DeepSpeed Configuration:**
+    *   A `DeepSpeedConfig` class was introduced in `src/ltxv_trainer/config.py` with a `config_path` field.
+    *   `LtxvTrainerConfig` now includes a `deepspeed: DeepSpeedConfig` field.
+    *   A sample DeepSpeed configuration JSON file (`deepspeed_config.json`) has been created in the root directory. This file specifies common DeepSpeed configurations like ZeRO stages, mixed precision, and gradient accumulation.
+
+## 4. Refactoring `src/ltxv_trainer/trainer.py` (OPTIONAL)
+
+*   **Base Trainer Class:** This step was considered optional and has not been implemented. It could be done in the future to further modularize the code.
+
+## 5. Testing and Verification (TO DO)
+
+*   **Unit Tests:** Create specific tests for DeepSpeed integration, ensuring correct initialization, training steps, and checkpointing.
+*   **End-to-End Training:** Run full training runs with DeepSpeed to verify performance, memory usage, and convergence.
+
+## High-Level Steps for Implementation (UPDATED STATUS):
+
+1.  Create `src/ltxv_trainer/trainer_deep.py`. (COMPLETED)
+2.  Copy relevant parts from `src/ltxv_trainer/trainer.py` to `trainer_deep.py`. (COMPLETED)
+3.  Modify `trainer_deep.py` to integrate DeepSpeed. (COMPLETED)
+    *   Add DeepSpeed imports and argument parsing. (COMPLETED)
+    *   Replace `Accelerator`'s model/optimizer/dataloader preparation with `deepspeed.initialize`. (COMPLETED)
+    *   Adjust the training loop for `model_engine.backward()` and `model_engine.step()`. (COMPLETED)
+    *   Implement DeepSpeed checkpointing. (COMPLETED)
+    *   Ensure validation/sampling correctly uses the DeepSpeed-wrapped model. (COMPLETED)
+4.  Create a sample DeepSpeed configuration JSON file. (COMPLETED)
+5.  Update `scripts/train_distributed.py` (or a new script) to use `trainer_deep.py` and pass DeepSpeed arguments. (COMPLETED - new script `scripts/train_deepspeed.py` created)
+
+This plan provides a structured approach to integrating DeepSpeed, focusing on modularity and leveraging existing code where possible.

@@ -37,5 +37,30 @@
         "width": 512,
         "height": 512,
         "frames": 71
+    },
+    "df.mp4": {
+        "width": 512,
+        "height": 512,
+        "frames": 50
+    },
+    "h.mp4": {
+        "width": 512,
+        "height": 512,
+        "frames": 50
+    },
+    "zz_01.mp4": {
+        "width": 512,
+        "height": 512,
+        "frames": 71
+    },
+    "zz_02.mp4": {
+        "width": 512,
+        "height": 512,
+        "frames": 71
+    },
+    "zz_03.mp4": {
+        "width": 512,
+        "height": 512,
+        "frames": 71
     }
 }

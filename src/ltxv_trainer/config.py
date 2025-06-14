@@ -273,6 +273,14 @@ class FlowMatchingConfig(ConfigBaseModel):
     )
 
 
+class DeepSpeedConfig(ConfigBaseModel):
+    """Configuration for DeepSpeed training"""
+
+    config_path: str | Path = Field(
+        description="Path to the DeepSpeed configuration JSON file.",
+    )
+
+
 class LtxvTrainerConfig(ConfigBaseModel):
     """Unified configuration for LTXV training"""
 
@@ -285,6 +293,7 @@ class LtxvTrainerConfig(ConfigBaseModel):
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
     checkpoints: CheckpointsConfig = Field(default_factory=CheckpointsConfig)
     flow_matching: FlowMatchingConfig = Field(default_factory=FlowMatchingConfig)
+    deepspeed: DeepSpeedConfig = Field(default_factory=DeepSpeedConfig) # Added DeepSpeed config
 
     # General configuration
     seed: int = Field(
