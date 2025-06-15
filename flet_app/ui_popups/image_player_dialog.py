@@ -97,7 +97,7 @@ def build_crop_controls_row(
 
     crop_buttons_row_internal = ft.ResponsiveRow(controls=[crop_all_button, crop_button, closes_button],spacing=3,expand=True)
 
-    crop_editor_button = create_styled_button(text="Crop Editor", on_click=on_toggle_crop_editor_visibility, col=6, button_style=BTN_STYLE2)
+    area_editor_button = create_styled_button(text="Area Editor", on_click=on_toggle_crop_editor_visibility, col=6, button_style=BTN_STYLE2)
     crop_editor_apply_button = create_styled_button(text="Apply Crop", on_click=on_crop_editor_overlay_action, col=6, button_style=BTN_STYLE2, tooltip="Apply crop based on the visual editor overlay")
 
     crop_column_restored = ft.Column(
@@ -106,7 +106,7 @@ def build_crop_controls_row(
             ft.ResponsiveRow([height_field, substract_button]),
             ft.ResponsiveRow([crop_buttons_row_internal]),
             ft.Divider(height=1),
-            ft.ResponsiveRow([crop_editor_button, crop_editor_apply_button])
+            ft.ResponsiveRow([area_editor_button, crop_editor_apply_button])
         ],
         spacing=3,
         col={'md': 12},

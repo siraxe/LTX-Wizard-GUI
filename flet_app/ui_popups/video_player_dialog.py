@@ -8,6 +8,7 @@ import threading
 import time
 from typing import Optional, List, Callable, Tuple
 import asyncio
+import importlib # NEW IMPORT
 
 from settings import settings # Import the settings object
 
@@ -64,6 +65,7 @@ def build_crop_controls_row(
     on_crop_all_action: Callable,       # Corresponds to on_crop_all from _bak
     on_get_closest_action: Callable,    # Corresponds to on_get_closest from _bak
     on_crop_editor_overlay_action: Callable, # For "Apply" crop from editor
+    on_clean_editor_overlay_action: Callable, # NEW PARAMETER
     on_toggle_crop_editor_visibility: Callable, # Corresponds to on_crop_editor (to open/toggle) from _bak
     on_flip_horizontal_action: Callable,
     on_reverse_action: Callable,
@@ -106,9 +108,10 @@ def build_crop_controls_row(
 
     crop_buttons_row_internal = ft.ResponsiveRow(controls=[crop_all_button, crop_button, closes_button],spacing=3,expand=True) # Renamed to avoid conflict
 
-    # Using "Crop Editor" for toggle, "Apply" for applying overlay crop
-    crop_editor_button = create_styled_button(text="Crop Editor", on_click=on_toggle_crop_editor_visibility, col=6, button_style=BTN_STYLE2)
+    # Using "Area Editor" for toggle, "Apply" for applying overlay crop
+    area_editor_button = create_styled_button(text="Area Editor", on_click=on_toggle_crop_editor_visibility, col=6, button_style=BTN_STYLE2)
     crop_editor_apply_button = create_styled_button(text="Apply Crop", on_click=on_crop_editor_overlay_action, col=6, button_style=BTN_STYLE2, tooltip="Apply crop based on the visual editor overlay")
+    clean_editor_apply_button = create_styled_button(text="Apply Clean", on_click=on_clean_editor_overlay_action, col=12, button_style=BTN_STYLE2) # MODIFIED LINE
 
     # Frame Slider components
     frame_range_slider = ft.RangeSlider(
@@ -169,7 +172,8 @@ def build_crop_controls_row(
             ft.ResponsiveRow([height_field, substract_button]), # Use substract_button
             ft.ResponsiveRow([crop_buttons_row_internal]), # Row of CropAll/Crop/Closest
             ft.Divider(height=1),
-            ft.ResponsiveRow([crop_editor_button, crop_editor_apply_button]) # Row of EditorOpen/EditorApply
+            ft.ResponsiveRow([area_editor_button, crop_editor_apply_button]), # Row of EditorOpen/EditorApply
+            ft.ResponsiveRow([clean_editor_apply_button])
         ],
         # alignment=ft.MainAxisAlignment.CENTER, # Columns don't take MainAxisAlignment
         spacing=3,
@@ -491,6 +495,9 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
     dialog_state.active_on_caption_updated_callback = on_caption_updated_callback
     dialog_state.active_page_ref = page
 
+    # Force a reload of video_editor to ensure latest definitions are used
+    importlib.reload(video_editor)
+
     def toggle_crop_editor_overlay_visibility(e=None):
         dialog_state.overlay_is_visible = not dialog_state.overlay_is_visible
         if dialog_state.overlay_control_instance:
@@ -539,9 +546,20 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
         page, dialog_state.current_video_path_for_dialog,
         dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback
     )
+    on_clean_overlay_apply_act = lambda e: page.run_thread( # NEW LAMBDA
+        video_editor.on_clean_action_handler, # Call from video_editor
+        page, # Pass page
+        dialog_state.current_video_path_for_dialog,
+        (int(dialog_state.overlay_control_instance.left or 0),
+         int(dialog_state.overlay_control_instance.top or 0),
+         int(dialog_state.overlay_control_instance.width or 0),
+         int(dialog_state.overlay_control_instance.height or 0)),
+        dialog_state.current_video_list_for_dialog, # Pass video_list
+        dialog_state.active_on_caption_updated_callback # Pass on_caption_updated_callback
+    )
     on_flip_act = lambda e: page.run_thread(video_editor.on_flip_horizontal, page, dialog_state.current_video_path_for_dialog, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
     on_rev_act = lambda e: page.run_thread(video_editor.on_reverse, page, dialog_state.current_video_path_for_dialog, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
-    on_remap_act = lambda speed_val: page.run_thread(video_editor.on_time_remap, page, dialog_state.current_video_path_for_dialog, speed_val, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
+    on_remap_act = lambda speed_val: page.run_thread(video_editor.on_time_remap, page, dialog_state.current_video_path_for_video, speed_val, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
     on_cut_act = lambda start_f, end_f: page.run_thread(video_editor.cut_to_frames, page, dialog_state.current_video_path_for_dialog, start_f, end_f, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
     on_split_act = lambda split_f: page.run_thread(video_editor.split_to_video, page, dialog_state.current_video_path_for_dialog, split_f, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback, dialog_state.active_video_player_instance)
     on_rotate_90_act = lambda direction: page.run_thread(video_editor.on_rotate_90_video_action, page, dialog_state.current_video_path_for_dialog, direction, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
@@ -553,6 +571,7 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
         on_crop_all_action=on_crop_all_act,
         on_get_closest_action=on_get_closest_act,
         on_crop_editor_overlay_action=on_crop_overlay_apply_act,
+        on_clean_editor_overlay_action=on_clean_overlay_apply_act, # PASS NEW LAMBDA
         on_toggle_crop_editor_visibility=toggle_crop_editor_overlay_visibility,
         on_flip_horizontal_action=on_flip_act,
         on_reverse_action=on_rev_act,
@@ -588,7 +607,9 @@ def open_video_captions_dialog(page: ft.Page, video_path: str, video_list: Optio
 
     if hasattr(page, 'base_dialog') and page.base_dialog:
         page.base_dialog._on_dismiss_callback = lambda e: handle_dialog_dismiss(page)
-        page.base_dialog.show_dialog(content=main_content_ui, title=dialog_title_text, new_width=desired_width, title_prefix_controls=nav_prefix_controls)
+        page.base_dialog.show_dialog(
+            content=main_content_ui, title=dialog_title_text, new_width=desired_width, title_prefix_controls=nav_prefix_controls
+        )
         page.dialog = page.base_dialog
         page.video_dialog_open = True
         page.video_dialog_hotkey_handler = lambda event: handle_caption_dialog_keyboard(page, event)

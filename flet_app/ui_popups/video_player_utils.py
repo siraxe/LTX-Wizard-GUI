@@ -702,3 +702,89 @@ def split_video_by_frame(
         return False, f"FFmpeg error during split (part 2): {stderr2.strip()}", temp_output_path_1, None
         
     return True, f"Video split at frame {split_frame}.", temp_output_path_1, temp_output_path_2
+
+def clean_video_from_overlay(
+    current_video_path: str,
+    overlay_x_norm: float, overlay_y_norm: float, # Pixel values from displayed video
+    overlay_w_norm: float, overlay_h_norm: float, # Pixel values from displayed video
+    displayed_video_w: int, displayed_video_h: int, # Actual pixel size of video as displayed
+    video_orig_w: int, video_orig_h: int
+) -> Tuple[bool, str, Optional[str]]:
+    """
+    "Cleans" a video by cropping based on the provided overlay coordinates,
+    effectively removing black bars or unwanted padding.
+    The overlay coordinates are relative to the *displayed* video within the player.
+    Handles scaling calculations to map displayed coordinates to original video coordinates.
+    Returns (success, message, output_path_or_none).
+    """
+    ffmpeg_exe = _get_ffmpeg_exe_path()
+    if not os.path.exists(current_video_path):
+        return False, "Input video not found for cleaning.", None
+
+    # Calculate the scale factor and offsets of the displayed video within the player_content area
+    video_aspect = video_orig_w / video_orig_h
+    player_aspect = displayed_video_w / displayed_video_h # Use displayed_video_w/h as player_content_w/h for this context
+
+    actual_disp_w: float
+    actual_disp_h: float
+    offset_x_player: float = 0
+    offset_y_player: float = 0
+
+    if video_aspect > player_aspect: # Video is wider than player area (letterboxed if height matches)
+        actual_disp_w = displayed_video_w
+        actual_disp_h = actual_disp_w / video_aspect
+        offset_y_player = (displayed_video_h - actual_disp_h) / 2
+    else: # Video is taller than player area (pillarboxed if width matches)
+        actual_disp_h = displayed_video_h
+        actual_disp_w = actual_disp_h * video_aspect
+        offset_x_player = (displayed_video_w - actual_disp_w) / 2
+    
+    # Crop coordinates in terms of the original video dimensions
+    # The overlay_x_norm, etc. are already pixel values from the GestureDetector
+    
+    # Scale factor from original video to displayed video
+    scale_to_displayed_w = actual_disp_w / video_orig_w
+    scale_to_displayed_h = actual_disp_h / video_orig_h
+    
+    # Crop coordinates in original video pixels
+    crop_orig_x = (overlay_x_norm - offset_x_player) / scale_to_displayed_w
+    crop_orig_y = (overlay_y_norm - offset_y_player) / scale_to_displayed_h
+    crop_orig_w = overlay_w_norm / scale_to_displayed_w
+    crop_orig_h = overlay_h_norm / scale_to_displayed_h
+
+    # Ensure crop dimensions are positive and within bounds
+    crop_orig_x = max(0, crop_orig_x)
+    crop_orig_y = max(0, crop_orig_y)
+    crop_orig_w = min(crop_orig_w, video_orig_w - crop_orig_x)
+    crop_orig_h = min(crop_orig_h, video_orig_h - crop_orig_y)
+
+    # Ensure width and height are divisible by 16 and at least 16x16 for encoder compatibility
+    # Use _closest_divisible_by for all crop parameters
+    target_crop_w = _closest_divisible_by(int(crop_orig_w), 16)
+    target_crop_h = _closest_divisible_by(int(crop_orig_h), 16)
+    target_crop_x = _closest_divisible_by(int(crop_orig_x), 16)
+    target_crop_y = _closest_divisible_by(int(crop_orig_y), 16)
+
+    if target_crop_w < 16 or target_crop_h < 16:
+        return False, f"Clean crop dimensions too small ({target_crop_w}x{target_crop_h}). Min 16x16 for encoder.", None
+
+    temp_output_path = _get_temp_output_path(current_video_path, "cleaned_overlay")
+    
+    vf_filters = []
+    vf_filters.append(f"crop={target_crop_w}:{target_crop_h}:{target_crop_x}:{target_crop_y}")
+    vf_filters.append("pad=ceil(iw/2)*2:ceil(ih/2)*2") # Ensure final dimensions are even
+
+    command = [
+        ffmpeg_exe, "-y", "-i", current_video_path,
+        "-vf", ",".join(vf_filters),
+        *_get_video_codec_and_flags(), # Use dynamic codec and flags
+        "-c:a", "aac", "-b:a", "128k", # Or copy audio: "-c:a", "copy"
+        temp_output_path
+    ]
+
+    success, _, stderr = _run_ffmpeg_process(command)
+    if success and os.path.exists(temp_output_path):
+        return True, "Video cleaned (cropped) successfully from overlay selection!", temp_output_path
+    else:
+        if os.path.exists(temp_output_path): os.remove(temp_output_path) # Clean up
+        return False, f"FFmpeg error during clean crop: {stderr.strip()}", None
