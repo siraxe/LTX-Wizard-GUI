@@ -423,7 +423,7 @@ async def on_rename_files_click(e: ft.ControlEvent, selected_dataset_ref, DATASE
             e.page.update()
         return
     
-    selected_files_from_thumbnails = _get_selected_filenames(thumbnails_grid_ref_obj)
+    selected_files_from_thumbnails = _get_selected_filenames(thumbnails_grid_ref_obj.current)
     
     if selected_files_from_thumbnails:
         print(f"[DEBUG] Renaming {len(selected_files_from_thumbnails)} selected files.")
