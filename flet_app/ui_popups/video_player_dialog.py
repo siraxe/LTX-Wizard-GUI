@@ -9,6 +9,8 @@ import time
 from typing import Optional, List, Callable, Tuple
 import asyncio
 
+from settings import settings # Import the settings object
+
 from .video_dialog_class import dialog_state
 from . import video_player_utils as vpu
 from . import video_editor
@@ -336,6 +338,7 @@ def build_video_player(video_path: str, autoplay: bool = False) -> Tuple[ft.Stac
         width=VIDEO_PLAYER_DIALOG_WIDTH - 40, height=VIDEO_PLAYER_DIALOG_HEIGHT - 40,
         expand=False, show_controls=True, playlist_mode="none",
         on_completed=lambda e: handle_video_completed(e.control),
+        volume=100.0 if settings.get("enable_audio", False) else 0.0,
     )
     video_player_control._video_fps = video_fps
     video_player_control._total_frames = total_frames

@@ -7,7 +7,8 @@ from settings import settings
 
 def create_settings_content(
     page: ft.Page,
-    image_editor_path_textfield_ref: ft.Ref[ft.TextField]
+    image_editor_path_textfield_ref: ft.Ref[ft.TextField],
+    enable_audio_checkbox_ref: ft.Ref[ft.Checkbox]
 ) -> ft.Column:
     """Creates and returns the content for the Settings dialog."""
     return ft.Column(
@@ -32,7 +33,12 @@ def create_settings_content(
             ),
             ft.ResponsiveRow(
                 [
-                    create_styled_button("Apply", on_click=lambda e: _save_settings(e, image_editor_path_textfield_ref), col=3)
+                    ft.Checkbox(label="Enable audio", value=False, col=12, ref=enable_audio_checkbox_ref)
+                ],
+            ),
+            ft.ResponsiveRow(
+                [
+                    create_styled_button("Apply", on_click=lambda e: _save_settings(e, image_editor_path_textfield_ref, enable_audio_checkbox_ref), col=3)
                 ],
                 alignment=ft.MainAxisAlignment.END,
             ),
@@ -41,7 +47,7 @@ def create_settings_content(
         spacing=10,
     )
 
-def _save_settings(e, image_editor_path_textfield_ref: ft.Ref[ft.TextField]):
+def _save_settings(e, image_editor_path_textfield_ref: ft.Ref[ft.TextField], enable_audio_checkbox_ref: ft.Ref[ft.Checkbox]):
     """Saves the settings from the textfields to settings.json."""
     settings_file_path = os.path.join(os.path.dirname(__file__), 'settings.json')
     
@@ -51,6 +57,7 @@ def _save_settings(e, image_editor_path_textfield_ref: ft.Ref[ft.TextField]):
         
         # Update IMAGE_EDITOR_PATH
         current_settings["IMAGE_EDITOR_PATH"] = image_editor_path_textfield_ref.current.value
+        current_settings["enable_audio"] = enable_audio_checkbox_ref.current.value
         
         with open(settings_file_path, 'w') as f:
             json.dump(current_settings, f, indent=4)
@@ -60,6 +67,8 @@ def _save_settings(e, image_editor_path_textfield_ref: ft.Ref[ft.TextField]):
         # Update the textfield with the newly loaded value
         image_editor_path_textfield_ref.current.value = settings.get("IMAGE_EDITOR_PATH", "")
         image_editor_path_textfield_ref.current.update() # Ensure the UI updates
+        enable_audio_checkbox_ref.current.value = settings.get("enable_audio", False)
+        enable_audio_checkbox_ref.current.update()
         
         print(f"Settings saved successfully to {settings_file_path}")
         # Optionally, you might want to show a confirmation to the user
@@ -76,10 +85,12 @@ def _save_settings(e, image_editor_path_textfield_ref: ft.Ref[ft.TextField]):
 def open_settings_dialog(page: ft.Page):
     """Opens the Settings dialog using the PopupDialogBase."""
     image_editor_path_textfield_ref = ft.Ref[ft.TextField]()
-    settings_content = create_settings_content(page, image_editor_path_textfield_ref)
+    enable_audio_checkbox_ref = ft.Ref[ft.Checkbox]()
+    settings_content = create_settings_content(page, image_editor_path_textfield_ref, enable_audio_checkbox_ref)
     
     # Populate the textfield with the value from settings.json
     image_editor_path_textfield_ref.current.value = settings.get("IMAGE_EDITOR_PATH", "")
+    enable_audio_checkbox_ref.current.value = settings.get("enable_audio", False)
     
     title_str = "Settings"
     
