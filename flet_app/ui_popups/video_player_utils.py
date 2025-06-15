@@ -260,6 +260,44 @@ def _get_ffmpeg_exe_path() -> str:
         pass # Keep as is, or try to resolve relative to a known project root
     return ffmpeg_path
 
+def _get_video_codec_and_flags() -> List[str]:
+    """
+    Determines the best video codec and associated flags based on settings.
+    Prioritizes GPU codecs if use_gpu_ffmpeg is true.
+    """
+    if app_settings.get("use_gpu_ffmpeg", False):
+        # Try NVIDIA (NVENC)
+        try:
+            # Check if nvenc is available by running a dummy command
+            # This is a simplified check; a more robust one would parse `ffmpeg -encoders`
+            subprocess.run([_get_ffmpeg_exe_path(), "-hide_banner", "-encoders"], capture_output=True, check=True, text=True)
+            if "h264_nvenc" in subprocess.run([_get_ffmpeg_exe_path(), "-encoders"], capture_output=True, text=True).stdout:
+                print("Using NVIDIA (NVENC) for GPU acceleration.")
+                return ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr_hq", "-cq", "18"]
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass # NVENC not found or ffmpeg not configured for it
+
+        # Try AMD (AMF)
+        try:
+            if "h264_amf" in subprocess.run([_get_ffmpeg_exe_path(), "-encoders"], capture_output=True, text=True).stdout:
+                print("Using AMD (AMF) for GPU acceleration.")
+                return ["-c:v", "h264_amf", "-quality", "balanced", "-qp_i", "18", "-qp_p", "18"]
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass # AMF not found
+
+        # Try Intel (QSV)
+        try:
+            if "h264_qsv" in subprocess.run([_get_ffmpeg_exe_path(), "-encoders"], capture_output=True, text=True).stdout:
+                print("Using Intel (QSV) for GPU acceleration.")
+                return ["-c:v", "h264_qsv", "-preset", "veryfast", "-q", "18"]
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass # QSV not found
+
+        print("No suitable GPU encoder found or configured. Falling back to CPU (libx264).")
+    
+    # Fallback to CPU (libx264)
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"]
+
 def _run_ffmpeg_process(command: List[str]) -> Tuple[bool, str, str]:
     """
     Runs an FFmpeg command using subprocess.
@@ -388,7 +426,7 @@ def crop_video_from_overlay(
     command = [
         ffmpeg_exe, "-y", "-i", current_video_path,
         "-vf", ",".join(vf_filters),
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        *_get_video_codec_and_flags(), # Use dynamic codec and flags
         "-c:a", "aac", "-b:a", "128k", # Or copy audio: "-c:a", "copy"
         temp_output_path
     ]
@@ -438,7 +476,7 @@ def crop_video_to_dimensions(
     command = [
         ffmpeg_exe, "-y", "-i", current_video_path,
         "-vf", scale_crop_filter,
-        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        *_get_video_codec_and_flags(), # Use dynamic codec and flags
         "-c:a", "aac", "-b:a", "128k", # Or copy: "-c:a", "copy"
         temp_output_path
     ]
@@ -458,7 +496,7 @@ def flip_video_horizontal(current_video_path: str) -> Tuple[bool, str, Optional[
     command = [
         ffmpeg_exe, "-y", "-i", current_video_path,
         "-vf", "hflip",
-        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        *_get_video_codec_and_flags(), # Use dynamic codec and flags
         "-c:a", "copy", # Copy audio stream
         temp_output_path
     ]
@@ -492,7 +530,7 @@ def rotate_video_90(current_video_path: str, direction: str) -> Tuple[bool, str,
     command = [
         ffmpeg_exe, "-y", "-i", current_video_path,
         "-vf", transpose_value,
-        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        *_get_video_codec_and_flags(), # Use dynamic codec and flags
         "-c:a", "copy", # Copy audio stream
         temp_output_path
     ]
@@ -512,7 +550,7 @@ def reverse_video(current_video_path: str) -> Tuple[bool, str, Optional[str]]:
         "-vf", "reverse", 
         # Reversing audio can be complex and sometimes undesirable.
         # "-af", "areverse", # Optionally reverse audio
-        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        *_get_video_codec_and_flags(), # Use dynamic codec and flags
         "-c:a", "copy", # Typically copy audio or omit if audio reversal is not needed / problematic
         temp_output_path
     ]
@@ -558,7 +596,7 @@ def time_remap_video_by_speed(current_video_path: str, speed_multiplier: float) 
         "-vf", f"setpts={pts_factor}*PTS",
         "-af", audio_filter,
         "-r", str(original_fps), # Keep original FPS, duration changes
-        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        *_get_video_codec_and_flags(), # Use dynamic codec and flags
         # Audio codec might need to be specified if not aac, or if issues with atempo
         "-c:a", "aac", "-b:a", "128k", 
         temp_output_path
@@ -598,7 +636,7 @@ def cut_video_by_frames(
         "-i", current_video_path, 
         "-ss", str(start_time),   # Seek to start time
         "-t", str(duration),      # Cut for the calculated duration
-        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        *_get_video_codec_and_flags(), # Use dynamic codec and flags
         "-c:a", "copy", # Copy audio stream
         temp_output_path
     ]
@@ -639,7 +677,7 @@ def split_video_by_frame(
     command1 = [
         ffmpeg_exe, "-y", "-i", current_video_path,
         "-ss", str(start_time_1), "-to", str(end_time_1),
-        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        *_get_video_codec_and_flags(), # Use dynamic codec and flags
         "-c:a", "copy", temp_output_path_1
     ]
     success1, _, stderr1 = _run_ffmpeg_process(command1)
@@ -654,7 +692,7 @@ def split_video_by_frame(
     command2 = [
         ffmpeg_exe, "-y", "-i", current_video_path,
         "-ss", str(start_time_2),
-        "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        *_get_video_codec_and_flags(), # Use dynamic codec and flags
         "-c:a", "copy", temp_output_path_2
     ]
     success2, _, stderr2 = _run_ffmpeg_process(command2)
