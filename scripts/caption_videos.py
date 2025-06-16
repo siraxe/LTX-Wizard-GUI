@@ -109,6 +109,7 @@ def caption_media(
     output_format: OutputFormat,
     override: bool,
     max_new_tokens: int,
+    selected_files: list[str] = None, # New parameter
 ) -> None:
     """Caption videos and images using the provided captioning model.
     Args:
@@ -121,16 +122,32 @@ def caption_media(
         clean_caption: Whether to clean up captions
         output_format: Format to save the captions in
         override: Whether to override existing captions
+        selected_files: List of specific filenames to caption. If provided, only these files will be processed.
     """
 
-    # Get list of media files to process
-    media_files = _get_media_files(input_path, extensions, recursive)
+    # Get list of all media files in the input path
+    all_media_files = _get_media_files(input_path, extensions, recursive)
 
-    if not media_files:
+    if not all_media_files:
         console.print("[bold yellow]No media files found to process.[/]")
         return
 
-    console.print(f"Found [bold]{len(media_files)}[/] media files to process.")
+    console.print(f"Found [bold]{len(all_media_files)}[/] media files in total.")
+
+    # Filter media files based on selected_files if provided
+    if selected_files:
+        selected_basenames = {Path(f).name for f in selected_files}
+        media_files = [f for f in all_media_files if f.name in selected_basenames]
+        if not media_files:
+            console.print("[bold yellow]No selected media files found in the input path.[/]")
+            return
+        console.print(f"Processing [bold]{len(media_files)}[/] selected media files.")
+        # If specific files are selected, we always override their captions
+        override = True
+    else:
+        media_files = all_media_files
+        console.print(f"Processing [bold]{len(media_files)}[/] media files.")
+
 
     # Get the base directory for relative paths (the directory containing the output file)
     base_dir = output_path.parent.resolve()
@@ -161,10 +178,11 @@ def caption_media(
 
     if not media_to_process:
         console.print("[bold yellow]No media to process. All media already have captions.[/]")
-        console.print("[bold yellow]Use --override to recaption all media.[/]")
+        if not selected_files: # Only suggest override if not already processing selected files
+            console.print("[bold yellow]Use --override to recaption all media.[/]")
         return
 
-    console.print(f"Processing [bold]{len(media_to_process)}[/] media.")
+    console.print(f"Actually processing [bold]{len(media_to_process)}[/] media.")
 
     # Create progress bar
     progress = Progress(
@@ -213,10 +231,9 @@ def caption_media(
     _save_captions(captions, output_path, output_format)
 
     # Print summary
-    processed_media = len(captions) - len(existing_captions)
-    total_to_process = len(media_files) - len(skipped_media)
+    processed_media_count = len(media_to_process)
     console.print(
-        f"[bold green]✓[/] Captioned [bold]{processed_media}/{total_to_process}[/] media successfully.",
+        f"[bold green]✓[/] Captioned [bold]{processed_media_count}[/] media successfully.",
     )
 
 
@@ -478,6 +495,11 @@ def main(  # noqa: PLR0913
         "--override",
         help="Whether to override existing captions for media",
     ),
+    selected_files: str = typer.Option(
+        None,
+        "--selected-files",
+        help="Comma-separated list of specific filenames (basename only) to caption. If provided, only these files will be processed and their captions will be overwritten.",
+    ),
 ) -> None:
     """Auto-caption videos and images using vision-language models.
 
@@ -490,6 +512,9 @@ def main(  # noqa: PLR0913
 
     # Parse extensions
     ext_list = [ext.strip() for ext in extensions.split(",")]
+
+    # Parse selected files if provided
+    selected_files_list = [f.strip() for f in selected_files.split(",")] if selected_files else None
 
     # Determine output path and format
     if output is None:
@@ -532,6 +557,7 @@ def main(  # noqa: PLR0913
         output_format=output_format,
         override=override,
         max_new_tokens=max_new_tokens,
+        selected_files=selected_files_list, # Pass the parsed list
     )
 
 

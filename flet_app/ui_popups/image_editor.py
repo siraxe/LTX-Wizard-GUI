@@ -41,7 +41,7 @@ def _perform_crop_from_editor_overlay(page: ft.Page, current_image_path: str, im
         return
 
     if not image_dialog_state.overlay_is_visible: 
-        if page: page.snack_bar = ft.SnackBar(ft.Text("Crop overlay is not visible. Please open the Crop Editor."), open=True); page.update()
+        if page: page.snack_bar = ft.SnackBar(ft.Text("Area overlay is not visible. Please open the Area Editor."), open=True); page.update()
         return
 
     metadata = ipu.get_image_metadata(current_image_path)

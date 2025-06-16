@@ -30,4 +30,4 @@ optimum-quanto==0.2.7
 pillow-heif==0.22.0
 scenedetect==0.6.6
 bitsandbytes==0.45.5 # if sys_platform == 'linux' # Note: platform marker needs to be handled by user if not on Linux
-decord==0.6.0 # if sys_platform == 'linux' # Note: platform marker needs to be handled by user if not on Linux
+decord

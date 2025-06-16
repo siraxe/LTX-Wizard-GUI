@@ -1,8 +1,13 @@
 import flet as ft 
 import os
 import shutil
-from typing import Optional, List, Callable 
+from typing import Optional, List, Callable, Tuple
 from flet_video.video import Video # <--- ADDED THIS IMPORT
+from PIL import Image, ImageDraw
+import numpy as np
+import subprocess
+import sys
+from ui._styles import VIDEO_PLAYER_DIALOG_WIDTH, VIDEO_PLAYER_DIALOG_HEIGHT
 
 from . import video_player_dialog 
 from .video_dialog_class import dialog_state as player_dialog_state 
@@ -40,7 +45,7 @@ def _perform_crop_from_editor_overlay(page: ft.Page, current_video_path: str, vi
         return
 
     if not player_dialog_state.overlay_is_visible: 
-        if page: page.snack_bar = ft.SnackBar(ft.Text("Crop overlay is not visible. Please open the Crop Editor."), open=True); page.update()
+        if page: page.snack_bar = ft.SnackBar(ft.Text("Area overlay is not visible. Please open the Area Editor."), open=True); page.update()
         return
 
     metadata = vpu.get_video_metadata(current_video_path)
@@ -379,3 +384,118 @@ def cut_all_videos_to_max(
         
         if not refreshed_current_video: 
             page.update()
+
+def on_clean_action_handler(page: ft.Page, current_video_path: str, overlay_coords: Tuple[int, int, int, int], video_list: Optional[List[str]], on_caption_updated_callback: Optional[Callable]):
+    """
+    Handles the 'clean' action by creating a mask and calling an external script.
+    """
+    if not current_video_path or not os.path.exists(current_video_path):
+        if page: page.snack_bar = ft.SnackBar(ft.Text("Error: Invalid video path for cleaning."), open=True); page.update()
+        return
+
+    # Get video resolution
+    metadata = vpu.get_video_metadata(current_video_path)
+    video_width = metadata.get('width')
+    video_height = metadata.get('height')
+
+    if not video_width or not video_height:
+        if page: page.snack_bar = ft.SnackBar(ft.Text(f"Error: Could not get video resolution for {os.path.basename(current_video_path)}"), open=True); page.update()
+        return
+
+    # Create a black image with video resolution
+    mask_image = Image.new('L', (video_width, video_height), 0) # 'L' for black/white (grayscale)
+    draw = ImageDraw.Draw(mask_image)
+
+    # selected_area_zone is (left, top, width, height) in display coordinates
+    display_area_width = VIDEO_PLAYER_DIALOG_WIDTH - 40
+    display_area_height = VIDEO_PLAYER_DIALOG_HEIGHT - 40
+
+    # Calculate video aspect ratio and display aspect ratio
+    video_aspect_ratio = video_width / video_height
+    display_aspect_ratio = display_area_width / display_area_height
+
+    # Determine the actual rendered video dimensions within the player (accounting for letterbox/pillarbox)
+    rendered_video_width_in_player = display_area_width
+    rendered_video_height_in_player = display_area_height
+    offset_x = 0
+    offset_y = 0
+
+    if video_aspect_ratio > display_aspect_ratio: # Letterboxing (video is wider than player)
+        rendered_video_height_in_player = int(display_area_width / video_aspect_ratio)
+        offset_y = (display_area_height - rendered_video_height_in_player) / 2
+    else: # Pillarboxing (video is taller than player)
+        rendered_video_width_in_player = int(display_area_height * video_aspect_ratio)
+        offset_x = (display_area_width - rendered_video_width_in_player) / 2
+
+    # Calculate scaling factors from rendered video in player to original video resolution
+    scale_x = video_width / rendered_video_width_in_player
+    scale_y = video_height / rendered_video_height_in_player
+
+    # Scale the selected area coordinates, adjusting for offsets
+    x1_display, y1_display, w_display, h_display = overlay_coords
+    
+    x1_scaled = int((x1_display - offset_x) * scale_x)
+    y1_scaled = int((y1_display - offset_y) * scale_y)
+    w_scaled = int(w_display * scale_x)
+    h_scaled = int(h_display * scale_y)
+
+    # Ensure coordinates are within bounds of the original video resolution
+    x1_scaled = max(0, x1_scaled)
+    y1_scaled = max(0, y1_scaled)
+    w_scaled = min(w_scaled, video_width - x1_scaled)
+    h_scaled = min(h_scaled, video_height - y1_scaled)
+
+    x2_scaled = x1_scaled + w_scaled
+    y2_scaled = y1_scaled + h_scaled
+
+    draw.rectangle([x1_scaled, y1_scaled, x2_scaled, y2_scaled], fill=255) # fill=255 for white
+
+    # Construct mask image filename and path
+    video_basename = os.path.basename(current_video_path)
+    video_name_without_ext = os.path.splitext(video_basename)[0]
+    mask_filename = f"{video_name_without_ext}_mask.png"
+    
+    # Get the directory of the current video
+    video_dir = os.path.dirname(current_video_path)
+    
+    # Create temp_processing folder next to the video
+    temp_processing_dir = os.path.join(video_dir, "temp_processing")
+    os.makedirs(temp_processing_dir, exist_ok=True) # Ensure directory exists
+
+    mask_image_path = os.path.join(temp_processing_dir, mask_filename)
+    mask_image.save(mask_image_path)
+    print(f"Mask image saved to: {mask_image_path}")
+
+    script_path = os.path.join("flet_app", "minimax-remover", "run_remover_with_image_mask.py")
+    
+    # Construct the command string
+    # Use 'python' from venv and ensure paths are quoted for spaces
+    command_str = f"call venv\\Scripts\\activate.bat && python \"{script_path}\" --video_path \"{current_video_path}\" --image_mask_path \"{mask_image_path}\""
+    
+    print(f"Executing command: {command_str}")
+    try:
+        # Run the command with shell=True, streaming output to console
+        result = subprocess.run(command_str, shell=True, check=True, stdout=sys.stdout, stderr=sys.stderr)
+        print("Command execution finished.")
+        # After successful execution, update UI and video info
+        _generic_video_operation_ui_update(page, current_video_path, video_list, on_caption_updated_callback, "Video cleaned using external script!")
+    except subprocess.CalledProcessError as e:
+        msg = f"Command failed with error code {e.returncode}. See console for details."
+        if page: page.snack_bar = ft.SnackBar(ft.Text(msg), open=True); page.update()
+        print(msg)
+    except FileNotFoundError:
+        msg = "Error: 'python' command or script not found. Ensure Python is installed and in your PATH, and the script path is correct."
+        if page: page.snack_bar = ft.SnackBar(ft.Text(msg), open=True); page.update()
+        print(msg)
+    except Exception as e:
+        msg = f"An unexpected error occurred during cleaning: {e}"
+        if page: page.snack_bar = ft.SnackBar(ft.Text(msg), open=True); page.update()
+        print(msg)
+    finally:
+        # Clean up the mask image after use
+        if os.path.exists(mask_image_path):
+            try:
+                os.remove(mask_image_path)
+                print(f"Cleaned up mask file: {mask_image_path}")
+            except Exception as e_del:
+                print(f"Error deleting mask file {mask_image_path}: {e_del}")

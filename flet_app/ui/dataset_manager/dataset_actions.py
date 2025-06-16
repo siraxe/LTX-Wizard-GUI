@@ -35,8 +35,9 @@ def _get_selected_filenames(thumbnails_grid_control: ft.GridView) -> list[str]:
     Helper function to get a list of base filenames for selected thumbnails.
     """
     selected_filenames = []
-    if thumbnails_grid_control and thumbnails_grid_control.current and thumbnails_grid_control.current.controls:
-        for thumbnail_container in thumbnails_grid_control.current.controls:
+    # thumbnails_grid_control is already the GridView instance, so access controls directly
+    if thumbnails_grid_control and thumbnails_grid_control.controls:
+        for thumbnail_container in thumbnails_grid_control.controls:
             if isinstance(thumbnail_container, ft.Container) and \
                isinstance(thumbnail_container.content, ft.Stack):
                 
@@ -62,6 +63,7 @@ def build_caption_command(
     use_8bit: bool,
     instruction: str,
     max_new_tokens: int,
+    selected_files: list[str] = None, # New parameter
 ) -> str:
     python_exe = os.path.normpath(os.path.join("venv", "Scripts", "python.exe"))
     script_file = os.path.normpath("scripts/caption_videos.py")
@@ -77,6 +79,11 @@ def build_caption_command(
     escaped_instruction = json.dumps(instruction)
     command += f' --instruction {escaped_instruction}'
     command += f' --max-new-tokens {max_new_tokens}'
+
+    if selected_files:
+        # Join selected filenames with a comma and escape for shell
+        escaped_selected_files = json.dumps(",".join(selected_files))
+        command += f' --selected-files {escaped_selected_files}'
 
     return command
 
@@ -416,7 +423,7 @@ async def on_rename_files_click(e: ft.ControlEvent, selected_dataset_ref, DATASE
             e.page.update()
         return
     
-    selected_files_from_thumbnails = _get_selected_filenames(thumbnails_grid_ref_obj)
+    selected_files_from_thumbnails = _get_selected_filenames(thumbnails_grid_ref_obj.current)
     
     if selected_files_from_thumbnails:
         print(f"[DEBUG] Renaming {len(selected_files_from_thumbnails)} selected files.")
@@ -733,6 +740,17 @@ async def on_add_captions_click_with_model(e: ft.ControlEvent,
     
     output_json_path = os.path.join(dataset_folder_path, "captions.json")
 
+    selected_filenames = _get_selected_filenames(thumbnails_grid_control)
+    
+    if selected_filenames:
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Captioning {len(selected_filenames)} selected videos..."), open=True)
+            e.page.update()
+    else:
+        if e.page:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text("Captioning all videos in the dataset..."), open=True)
+            e.page.update()
+
     # --- Build the command string using the dedicated helper function ---
     command = build_caption_command(
         dataset_folder_path=dataset_folder_path,
@@ -741,6 +759,7 @@ async def on_add_captions_click_with_model(e: ft.ControlEvent,
         use_8bit=(selected_model == "qwen_25_vl" and captions_checkbox.value),
         instruction=cap_command_textfield.value.strip(),
         max_new_tokens=int(max_tokens_textfield.value.strip() or 100),
+        selected_files=selected_filenames # Pass selected files
     )
     # ---------------------------------------------------------------------
 
