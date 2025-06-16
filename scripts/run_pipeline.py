@@ -229,7 +229,7 @@ def prepare_and_run_training(
 
     # Convert LoRA to ComfyUI format
     console.print("[bold blue]Converting LoRA to ComfyUI format...[/]")
-    checkpoint_dir = output_dir / "checkpoints"
+    checkpoint_dir = output_dir / "checkpoint_dir"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     # Find the latest checkpoint in the output directory
     lora_checkpoints = list(checkpoint_dir.glob("lora_weights_step_*.safetensors"))

@@ -441,7 +441,7 @@ def build_file_picker_row(lora_input_path_field, lora_output_path_field, file_pi
                 on_click=lambda _: file_picker_input.pick_files(
                     allow_multiple=False,
                     allowed_extensions=["safetensors"],
-                    initial_directory=os.path.join(os.getcwd(), "workspace", "output", "checkpoints")
+                    initial_directory=os.path.join(os.getcwd(), "workspace", "output", "checkpoint_dir")
                 )
             ),
             lora_output_path_field,
@@ -806,7 +806,7 @@ def build_merge_loras_section(page, file_picker_merge_input: FilePicker, file_pi
 
 
     # Configure file picker calls for A and B
-    initial_lora_dir = os.path.join(os.getcwd(), "workspace", "output", "checkpoints")
+    initial_lora_dir = os.path.join(os.getcwd(), "workspace", "output", "checkpoint_dir")
     initial_merged_output_dir = os.path.join(os.getcwd(), "workspace", "output_merged")
 
 

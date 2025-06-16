@@ -598,7 +598,7 @@ class TopBarUtils:
             for k, v in cfg.items():
                 key = k
                 if parent_key == "validation" and k == "seed": key = "seed"
-                elif parent_key == "checkpoints" and k == "interval": key = "interval_checkpoints"
+                elif parent_key == "checkpoint_dir" and k == "interval": key = "interval_checkpoints"
                 elif parent_key == "seed": key = "seed_general"
                 elif parent_key == "misc" and k == "sampling_enabled": key = "Sampling"
                 elif parent_key == "misc" and k == "match_enabled": key = "Match"

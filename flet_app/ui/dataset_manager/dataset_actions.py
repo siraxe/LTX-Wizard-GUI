@@ -1243,7 +1243,7 @@ async def apply_affix_from_textfield(e: ft.ControlEvent, affix_type: str, select
             if e.page: e.page.update()
     # --- END NEW LOGIC ---
 
-    selected_files_from_thumbnails = _get_selected_filenames(thumbnails_grid_ref_obj)
+    selected_files_from_thumbnails = _get_selected_filenames(thumbnails_grid_ref_obj.current)
     
     captions_to_process = []
     if selected_files_from_thumbnails:
@@ -1362,7 +1362,7 @@ async def find_and_replace_in_captions(e: ft.ControlEvent, selected_dataset_ref,
         if e.page: e.page.update()
         return
 
-    selected_files_from_thumbnails = _get_selected_filenames(thumbnails_grid_ref_obj)
+    selected_files_from_thumbnails = _get_selected_filenames(thumbnails_grid_ref_obj.current)
     
     captions_to_process = []
     if selected_files_from_thumbnails:

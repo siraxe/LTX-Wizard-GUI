@@ -889,7 +889,7 @@ class LtxvTrainer:
         """Save the model weights."""
 
         # Create checkpoints directory if it doesn't exist
-        save_dir = Path(self._config.output_dir) / "checkpoints"
+        save_dir = Path(self._config.output_dir) / "checkpoint_dir"
         save_dir.mkdir(exist_ok=True, parents=True)
 
         # Create filename with step number

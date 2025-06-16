@@ -160,9 +160,9 @@ def _get_lora_options() -> dict[str, str]:
         return lora_options
 
     for name in os.listdir(output_dir):
-        checkpoints_dir = os.path.join(output_dir, name, "checkpoints")
-        if os.path.isdir(checkpoints_dir):
-            for filename in os.listdir(checkpoints_dir):
+        checkpoint_dir = os.path.join(output_dir, name, "checkpoint_dir")
+        if os.path.isdir(checkpoint_dir):
+            for filename in os.listdir(checkpoint_dir):
                 if filename.endswith(".safetensors"):
                     # Using folder name as key for simplicity, and relative path as value for dropdown text
                     option_key = name # This is what will be stored if selected
@@ -254,7 +254,7 @@ def _get_checkpoint_path_from_selection(selected_lora_key: str, lora_options_map
     # Let's assume for now _get_lora_options provides enough info or the structure is one .safetensors per folder.
 
     # If selected_lora_key is the folder name:
-    checkpoint_folder_path = os.path.join("workspace", "output", selected_lora_key, "checkpoints")
+    checkpoint_folder_path = os.path.join("workspace", "output", selected_lora_key, "checkpoint_dir")
     if os.path.isdir(checkpoint_folder_path):
         found_files = [f for f in os.listdir(checkpoint_folder_path) if f.endswith(".safetensors")]
         if found_files:
