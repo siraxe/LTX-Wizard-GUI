@@ -7,9 +7,11 @@ class VideoDialogState:
     """Manages the state for the Video Player Dialog."""
     def __init__(self):
         self.active_video_player_instance: Optional[Video] = None
+        self.active_video_player_stack_instance: Optional[ft.Stack] = None
         self.active_caption_field_instance: Optional[ft.TextField] = None
         self.active_caption_neg_field_instance: Optional[ft.TextField] = None
         self.active_message_container_instance: Optional[ft.Container] = None
+        self.active_main_content_column_instance: Optional[ft.Column] = None # New: Reference to the main content column
         self.active_on_caption_updated_callback: Optional[Callable] = None
         self.current_video_list_for_dialog: List[str] = [] # Assuming list of strings
         self.current_video_path_for_dialog: str = ""

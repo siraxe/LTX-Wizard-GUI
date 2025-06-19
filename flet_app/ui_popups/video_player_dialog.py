@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Optional, List, Callable, Tuple
 import asyncio
-import importlib # NEW IMPORT
+import importlib
 
 from settings import settings # Import the settings object
 
@@ -51,10 +51,10 @@ def build_caption_neg_field(initial_value: str = "") -> ft.TextField:
 def build_message_container(content: Optional[ft.Control] = None) -> ft.Container:
     return ft.Container(content=content, expand=True, padding=ft.padding.only(top=5))
 
-def build_navigation_controls(on_prev: Callable, on_next: Callable) -> List[ft.Control]:
+def build_navigation_controls(page_ref: ft.Page) -> List[ft.Control]:
     return [
-        ft.IconButton(ft.Icons.ARROW_LEFT, on_click=on_prev, tooltip="Previous video", icon_size=20),
-        ft.IconButton(ft.Icons.ARROW_RIGHT, on_click=on_next, tooltip="Next video", icon_size=20)
+        ft.IconButton(ft.Icons.ARROW_LEFT, on_click=lambda e: e.page.run_task(switch_video_in_dialog, page_ref, -1), tooltip="Previous video", icon_size=20),
+        ft.IconButton(ft.Icons.ARROW_RIGHT, on_click=lambda e: e.page.run_task(switch_video_in_dialog, page_ref, 1), tooltip="Next video", icon_size=20)
     ]
 
 def build_crop_controls_row(
@@ -75,12 +75,15 @@ def build_crop_controls_row(
     on_rotate_90_video_action: Callable, # Takes direction ('plus' or 'minus')
     on_cut_all_videos_to_max_action: Callable, # Takes num_frames
     video_list: Optional[List[str]] = None,
-    on_caption_updated_callback: Optional[Callable] = None):
-    metadata = vpu.get_video_metadata(current_video_path)
+    on_caption_updated_callback: Optional[Callable] = None,
+    metadata: dict = None): # MODIFIED: Accept metadata
+    
+    # MODIFIED: Only fetch metadata if not provided
+    if metadata is None:
+        metadata = vpu.get_video_metadata(current_video_path)
+
     original_frames = metadata.get('total_frames', 100) if metadata else 100
-    original_fps = metadata.get('fps', 30.0) if metadata else 30.0
     if original_frames <= 0: original_frames = 100 # Ensure positive for slider
-    if original_fps <= 0: original_fps = 30.0
 
     initial_width_val = ""
     initial_height_val = ""
@@ -99,21 +102,18 @@ def build_crop_controls_row(
     dialog_state.active_height_field_instance = height_field
 
     add_button = create_styled_button(text="+", on_click=lambda e: video_editor.handle_size_add(width_field, height_field, current_video_path, page), col=4, button_style=BTN_STYLE2)
-    # Using "substract_button" text and wiring as per _bak.py structure
     substract_button = create_styled_button(text="-", on_click=lambda e: video_editor.handle_size_sub(width_field, height_field, current_video_path, page), col=4, button_style=BTN_STYLE2)
 
     crop_button = create_styled_button(text="Crop", on_click=on_crop_dimensions_action, col=3, button_style=BTN_STYLE2)
     crop_all_button = create_styled_button(text="Crop All", on_click=on_crop_all_action, col=5, button_style=BTN_STYLE2)
     closes_button = create_styled_button(text="Closest", on_click=on_get_closest_action, col=4, button_style=BTN_STYLE2)
 
-    crop_buttons_row_internal = ft.ResponsiveRow(controls=[crop_all_button, crop_button, closes_button],spacing=3,expand=True) # Renamed to avoid conflict
+    crop_buttons_row_internal = ft.ResponsiveRow(controls=[crop_all_button, crop_button, closes_button],spacing=3,expand=True)
 
-    # Using "Area Editor" for toggle, "Apply" for applying overlay crop
     area_editor_button = create_styled_button(text="Area Editor", on_click=on_toggle_crop_editor_visibility, col=6, button_style=BTN_STYLE2)
     crop_editor_apply_button = create_styled_button(text="Apply Crop", on_click=on_crop_editor_overlay_action, col=6, button_style=BTN_STYLE2, tooltip="Apply crop based on the visual editor overlay")
-    clean_editor_apply_button = create_styled_button(text="Apply Clean", on_click=on_clean_editor_overlay_action, col=12, button_style=BTN_STYLE2) # MODIFIED LINE
+    clean_editor_apply_button = create_styled_button(text="Apply Clean", on_click=on_clean_editor_overlay_action, col=12, button_style=BTN_STYLE2)
 
-    # Frame Slider components
     frame_range_slider = ft.RangeSlider(
         min=0, max=original_frames, start_value=0, end_value=original_frames,
         divisions=original_frames if original_frames > 0 else None, label="{value}", round=0, expand=True)
@@ -129,11 +129,10 @@ def build_crop_controls_row(
     total_frames_text = ft.Text(f"Total: {total_val}", size=12)
     dialog_state.total_frames_text_instance = total_frames_text
     
-    # Connect to the existing function in video_player_dialog.py for slider changes
     frame_range_slider.on_change_end = lambda e_slider: update_playback_range_and_seek_video(int(e_slider.control.start_value), int(e_slider.control.end_value))
-    frame_range_slider.on_change = lambda e_slider: None # As in _bak.py
+    frame_range_slider.on_change = lambda e_slider: None
 
-    frame_slider_col = ft.Column( # As in _bak.py structure
+    frame_slider_col = ft.Column(
         controls=[frame_range_slider,
                     ft.Row([start_value_text, total_frames_text, end_value_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
         ],
@@ -141,78 +140,60 @@ def build_crop_controls_row(
         spacing=5,
     )
 
-    # Time Remap components
-    time_remap_value_text = ft.Text(f"Remapped: {original_frames}", size=12) # Initial text from _bak.py was "Remapped frames: "
+    time_remap_value_text = ft.Text(f"Remapped: {original_frames}", size=12)
     time_slider = ft.Slider(
-        min=0.1, max=2.0, value=1.0, divisions=99, # divisions 19 from current dialog, _bak.py had 99
-        label="{value}x Speed", round=1, expand=True, # label from current dialog, _bak.py had {value}x
+        min=0.1, max=2.0, value=1.0, divisions=99,
+        label="{value}x Speed", round=1, expand=True,
         on_change=lambda e_slider: (
-            setattr(time_remap_value_text, 'value', f"Remapped: {int(original_frames / e_slider.control.value)}"), # Text from current dialog
+            setattr(time_remap_value_text, 'value', f"Remapped: {int(original_frames / e_slider.control.value)}"),
             time_remap_value_text.update() if time_remap_value_text.page else None
         )
     )
 
-    # Action Buttons, wired to new action parameters
     flip_horizontal_button = create_styled_button(text="Flip Horizontal", on_click=on_flip_horizontal_action, col=6, button_style=BTN_STYLE2)
     cut_to_frames_button = create_styled_button(text="Cut to Frames", on_click=lambda e: on_cut_to_frames_action(int(frame_range_slider.start_value or 0), int(frame_range_slider.end_value or 0)), col=6, button_style=BTN_STYLE2)
-    split_to_video_button = create_styled_button(text="Split", on_click=lambda e: on_split_to_video_action(int(frame_range_slider.start_value or 0)), col=4, button_style=BTN_STYLE2) # col=6 from _bak
-    plus_90_button = create_styled_button(text="+90", on_click=lambda e: on_rotate_90_video_action('plus'), col=4, button_style=BTN_STYLE2) # col=6 from _bak
-    minus_90_button = create_styled_button(text="-90", on_click=lambda e: on_rotate_90_video_action('minus'), col=4, button_style=BTN_STYLE2) # col=6 from _bak
-    
+    split_to_video_button = create_styled_button(text="Split", on_click=lambda e: on_split_to_video_action(int(frame_range_slider.start_value or 0)), col=4, button_style=BTN_STYLE2)
+    plus_90_button = create_styled_button(text="+90", on_click=lambda e: on_rotate_90_video_action('plus'), col=4, button_style=BTN_STYLE2)
+    minus_90_button = create_styled_button(text="-90", on_click=lambda e: on_rotate_90_video_action('minus'), col=4, button_style=BTN_STYLE2)
     reverse_button = create_styled_button(text="Reverse", on_click=on_reverse_action, col=6, button_style=BTN_STYLE2)
     time_remap_button = create_styled_button(text="Time Remap", on_click=lambda e: on_time_remap_action(time_slider.value), col=6, button_style=BTN_STYLE2)
 
-    num_to_cut_to = create_textfield(label="num", value=str(original_frames // 2 if original_frames > 1 else 150), col=4, keyboard_type=ft.KeyboardType.NUMBER) # col=4 from _bak
-    cut_all_videos_to_max_button = create_styled_button(text="Cut All Videos to", on_click=lambda e: on_cut_all_videos_to_max_action(int(num_to_cut_to.value or 0)), col=8, button_style=BTN_STYLE2) # col=8 from _bak
+    num_to_cut_to = create_textfield(label="num", value=str(original_frames // 2 if original_frames > 1 else 150), col=4, keyboard_type=ft.KeyboardType.NUMBER)
+    cut_all_videos_to_max_button = create_styled_button(text="Cut All Videos to", on_click=lambda e: on_cut_all_videos_to_max_action(int(num_to_cut_to.value or 0)), col=8, button_style=BTN_STYLE2)
 
-    # Column 1: Crop Operations (structure from _bak.py)
-    crop_column_restored = ft.Column( # Changed from ResponsiveRow in _bak.py to Column for proper layout with col=4
+    crop_column_restored = ft.Column(
         controls=[
             ft.ResponsiveRow([width_field, add_button]),
-            ft.ResponsiveRow([height_field, substract_button]), # Use substract_button
-            ft.ResponsiveRow([crop_buttons_row_internal]), # Row of CropAll/Crop/Closest
+            ft.ResponsiveRow([height_field, substract_button]),
+            ft.ResponsiveRow([crop_buttons_row_internal]),
             ft.Divider(height=1),
-            ft.ResponsiveRow([area_editor_button, crop_editor_apply_button]), # Row of EditorOpen/EditorApply
+            ft.ResponsiveRow([area_editor_button, crop_editor_apply_button]),
             ft.ResponsiveRow([clean_editor_apply_button])
         ],
-        # alignment=ft.MainAxisAlignment.CENTER, # Columns don't take MainAxisAlignment
-        spacing=3,
-        col={'md': 4}, # Use dict for responsive col
-        scale=0.9 # scale not directly applicable to ft.Column, apply to ft.Container if needed or adjust padding/margins
+        spacing=3, col={'md': 4}, scale=0.9
     )
 
-    # Column 2: Frame Operations (structure from _bak.py)
     frame_controls_column_restored = ft.Column(
         controls=[
             frame_slider_col,
             ft.ResponsiveRow([flip_horizontal_button, cut_to_frames_button]),
             ft.ResponsiveRow([ plus_90_button, minus_90_button ,split_to_video_button]),
-            #split_to_video_button # Directly in column as per _bak
         ],
-        spacing=5,
-        col={'md': 4},
-        scale=0.9
+        spacing=5, col={'md': 4}, scale=0.9
     )
 
-    # Column 3: Time Operations (structure from _bak.py)
     time_controls_column_restored = ft.Column(
         controls=[
-            ft.ResponsiveRow([time_slider, ft.Row([time_remap_value_text], alignment=ft.MainAxisAlignment.CENTER, spacing=5)]), # Wrapped text in Row for alignment
+            ft.ResponsiveRow([time_slider, ft.Row([time_remap_value_text], alignment=ft.MainAxisAlignment.CENTER, spacing=5)]),
             ft.ResponsiveRow([reverse_button, time_remap_button]),
             ft.ResponsiveRow([cut_all_videos_to_max_button, num_to_cut_to]),
         ],
-        spacing=5,
-        col={'md': 4},
-        scale=0.9
+        spacing=5, col={'md': 4}, scale=0.9
     )
     
-    # The main container row, matching _bak.py's returnBox
-    # Applying scale here if needed, or on individual columns through wrappers. Flet's scale is on individual controls.
-    # For simplicity, scale is omitted here but can be added by wrapping columns in ft.Container(..., scale=0.9)
     returnBox = ft.ResponsiveRow(
         controls=[crop_column_restored, frame_controls_column_restored, time_controls_column_restored],
-        spacing=10, # spacing from current dialog's main row, _bak.py had 3 for its final row
-        vertical_alignment=ft.CrossAxisAlignment.START # from current dialog
+        spacing=10, vertical_alignment=ft.CrossAxisAlignment.START
     )
     return returnBox
 
@@ -230,7 +211,7 @@ def save_caption_with_ui_feedback(page: ft.Page, video_path: str, new_caption: s
     success, message = vpu.save_caption_for_video(video_path, new_caption, field_name)
     if page:
         page.snack_bar = ft.SnackBar(ft.Text(message), open=True)
-        if success and on_caption_updated_callback: on_caption_updated_callback() # Removed () for direct call if it was a method
+        if success and on_caption_updated_callback: on_caption_updated_callback()
         page.update()
     return success
 
@@ -329,17 +310,23 @@ def _hide_feedback_overlay(stack: ft.Stack):
         dialog_state.video_feedback_overlay.visible = False
         if stack.page: stack.update()
 
-def build_video_player(video_path: str, autoplay: bool = False) -> Tuple[ft.Stack, Video]:
+def build_video_player(video_path: str, autoplay: bool = False, metadata: dict = None) -> Tuple[ft.Stack, Video]: # MODIFIED: Accept metadata
     dialog_state.dialog_is_open = True
-    metadata = vpu.get_video_metadata(video_path)
+    
+    # MODIFIED: Only fetch metadata if not provided
+    if metadata is None:
+        metadata = vpu.get_video_metadata(video_path)
+
     video_fps = metadata.get('fps', 30.0) if metadata else 30.0
     total_frames = metadata.get('total_frames', 1) if metadata else 1
     if video_fps <= 0: video_fps = 30.0
-    if total_frames <=0: total_frames = 1
+    if total_frames <= 0: total_frames = 1
+
+    content_w, content_h = VIDEO_PLAYER_DIALOG_WIDTH - 40, VIDEO_PLAYER_DIALOG_HEIGHT - 40
 
     video_player_control = Video(
         playlist=[VideoMedia(resource=video_path)], autoplay=autoplay,
-        width=VIDEO_PLAYER_DIALOG_WIDTH - 40, height=VIDEO_PLAYER_DIALOG_HEIGHT - 40,
+        width=content_w, height=content_h,
         expand=False, show_controls=True, playlist_mode="none",
         on_completed=lambda e: handle_video_completed(e.control),
         volume=100.0 if settings.get("enable_audio", False) else 0.0,
@@ -354,7 +341,6 @@ def build_video_player(video_path: str, autoplay: bool = False) -> Tuple[ft.Stac
         bgcolor=ft.Colors.with_opacity(0.2, ft.Colors.WHITE),
         visible=dialog_state.overlay_is_visible,
     )
-    content_w, content_h = VIDEO_PLAYER_DIALOG_WIDTH - 40, VIDEO_PLAYER_DIALOG_HEIGHT - 40
     initial_left, initial_top = (content_w - initial_overlay_width) / 2, (content_h - initial_overlay_height) / 2
 
     dialog_state.overlay_control_instance = ft.GestureDetector(
@@ -365,13 +351,15 @@ def build_video_player(video_path: str, autoplay: bool = False) -> Tuple[ft.Stac
         drag_interval=0, visible=dialog_state.overlay_is_visible,
     )
     frame_counter_text = ft.Text(f"001 / {total_frames:03d}", color=ft.Colors.WHITE70, size=12)
-    dialog_state.video_feedback_overlay = ft.Container(
+    video_feedback_overlay = ft.Container(
         content=ft.Icon(ft.Icons.PLAY_ARROW, size=48, color=ft.Colors.WHITE70),
         alignment=ft.alignment.center, visible=False,
         width=content_w, height=content_h,
     )
+    dialog_state.video_feedback_overlay = video_feedback_overlay
+
     stack_elements = [
-        video_player_control, dialog_state.video_feedback_overlay,
+        video_player_control, video_feedback_overlay,
         ft.Container(content=frame_counter_text, alignment=ft.alignment.bottom_right, padding=ft.padding.only(bottom=5, right=10)),
         dialog_state.overlay_control_instance,
     ]
@@ -386,11 +374,13 @@ def build_video_player(video_path: str, autoplay: bool = False) -> Tuple[ft.Stac
         _show_video_feedback_icon(video_stack, icon, ft.Colors.WHITE70)
     video_player_control.play_or_pause = play_or_pause_with_feedback_local
 
-    if dialog_state.frame_update_timer and dialog_state.frame_update_timer.is_alive():
-        dialog_state.frame_update_timer.cancel()
+    # MODIFIED: Removed redundant thread management. The calling function (`switch_video_in_dialog`)
+    # is now responsible for stopping the old thread. This function only starts the new one.
+    dialog_state.dialog_is_open = True # Re-enable for the new thread
     dialog_state.frame_update_timer = threading.Timer(0.1, lambda: _update_frame_counter(video_player_control, frame_counter_text))
     dialog_state.frame_update_timer.daemon = True
     dialog_state.frame_update_timer.start()
+    
     return video_stack, video_player_control
 
 def handle_video_reframing(video_control_maybe_stack):
@@ -434,46 +424,65 @@ def handle_video_completed(video_control: Video):
         dialog_state.is_processing_completion = False
 
 # === Dialog Logic & Event Handlers ===
-def switch_video_in_dialog(page: ft.Page, new_video_offset: int):
+async def switch_video_in_dialog(page: ft.Page, new_video_offset: int):
+    """
+    Switches the video displayed in the dialog by rebuilding the content and using the
+    base dialog's `show_dialog` method to update the UI without closing.
+    """
+    # Stop the frame update thread for the old video player
     if dialog_state.frame_update_timer and dialog_state.frame_update_timer.is_alive():
         dialog_state.dialog_is_open = False
         dialog_state.frame_update_timer.join(timeout=0.2)
         dialog_state.frame_update_timer = None
-    if not dialog_state.current_video_list_for_dialog or not dialog_state.current_video_path_for_dialog: return
 
+    if not dialog_state.current_video_list_for_dialog or not dialog_state.current_video_path_for_dialog:
+        return
+
+    # Save captions for the current video before switching
     if dialog_state.active_caption_field_instance:
         save_caption_with_ui_feedback(page, dialog_state.current_video_path_for_dialog, dialog_state.active_caption_field_instance.value.strip(), None, 'caption')
     if dialog_state.active_caption_neg_field_instance:
         save_caption_with_ui_feedback(page, dialog_state.current_video_path_for_dialog, dialog_state.active_caption_neg_field_instance.value.strip(), None, 'negative_caption')
 
-    new_video_path = vpu.get_next_video_path(dialog_state.current_video_list_for_dialog, dialog_state.current_video_path_for_dialog, new_video_offset)
-    if not new_video_path: return
+    # Get the path for the next/previous video
+    new_video_path = vpu.get_next_video_path(
+        dialog_state.current_video_list_for_dialog,
+        dialog_state.current_video_path_for_dialog,
+        new_video_offset
+    )
 
-    dialog_state.current_video_path_for_dialog = new_video_path
-    dialog_state.dialog_is_open = True
+    if not new_video_path:
+        return  # Reached the end of the list
 
-    main_content_ui, nav_controls = create_video_player_with_captions_content(
-        page, dialog_state.current_video_path_for_dialog,
+    # Generate the new UI content and navigation controls for the new video.
+    # This function also updates the shared `dialog_state`.
+    new_content_column, new_nav_controls = create_video_player_with_captions_content(
+        page,
+        new_video_path,
         dialog_state.current_video_list_for_dialog,
         dialog_state.active_on_caption_updated_callback
     )
-    if hasattr(page, 'base_dialog') and page.base_dialog:
-        page.base_dialog.show_dialog(
-            content=main_content_ui, title=os.path.basename(dialog_state.current_video_path_for_dialog),
-            new_width=VIDEO_PLAYER_DIALOG_WIDTH, title_prefix_controls=nav_controls
-        )
-        page.dialog = page.base_dialog
-        page.video_dialog_open = True
-        page.video_dialog_hotkey_handler = lambda event: handle_caption_dialog_keyboard(page, event)
-    else:
-        fallback_alert = ft.AlertDialog(title=ft.Text(os.path.basename(dialog_state.current_video_path_for_dialog)), content=main_content_ui, actions=[ft.TextButton("Close", on_click=lambda e: fallback_alert.close())], on_dismiss=lambda e: handle_dialog_dismiss(page))
-        page.dialog = fallback_alert; fallback_alert.open = True
-        page.video_dialog_open = True; page.video_dialog_hotkey_handler = lambda event: handle_caption_dialog_keyboard(page, event)
 
-    if dialog_state.active_video_player_instance:
-        dialog_state.active_video_player_instance.seek(0)
-        if dialog_state.active_video_player_instance.page: dialog_state.active_video_player_instance.update()
-    if page: page.update()
+    # Get the title for the new video
+    dialog_title_text = os.path.basename(new_video_path)
+
+    # Use the base dialog's own `show_dialog` method to update its content.
+    # This is the correct way to interact with the custom dialog component.
+    if hasattr(page, 'base_dialog') and page.base_dialog and page.base_dialog.open:
+        page.base_dialog.show_dialog(
+            content=new_content_column,
+            title=dialog_title_text,
+            new_width=VIDEO_PLAYER_DIALOG_WIDTH, # Ensure the correct width is maintained
+            title_prefix_controls=new_nav_controls
+        )
+    else:
+        # Fallback in case the dialog was closed somehow
+        open_video_captions_dialog(
+            page,
+            new_video_path,
+            dialog_state.current_video_list_for_dialog,
+            dialog_state.active_on_caption_updated_callback
+        )
 
 
 def handle_caption_dialog_keyboard(page: ft.Page, e: ft.KeyboardEvent):
@@ -482,8 +491,8 @@ def handle_caption_dialog_keyboard(page: ft.Page, e: ft.KeyboardEvent):
         key = getattr(e, 'key', None)
         if key == PLAY_PAUSE_KEY and dialog_state.active_video_player_instance:
             dialog_state.active_video_player_instance.play_or_pause()
-        elif key == PREV_KEY: switch_video_in_dialog(page, -1)
-        elif key == NEXT_KEY: switch_video_in_dialog(page, 1)
+        elif key == PREV_KEY: page.run_task(switch_video_in_dialog, page, -1)
+        elif key == NEXT_KEY: page.run_task(switch_video_in_dialog, page, 1)
         elif key == "C" and not dialog_state.caption_field_is_focused:
             dialog_state.c_key_scaling_active = True
     except Exception as ex: print(f"Keyboard handler error: {ex}")
@@ -495,8 +504,11 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
     dialog_state.active_on_caption_updated_callback = on_caption_updated_callback
     dialog_state.active_page_ref = page
 
-    # Force a reload of video_editor to ensure latest definitions are used
-    importlib.reload(video_editor)
+    # MODIFIED: Removed slow and unnecessary module reloading.
+    # importlib.reload(video_editor)
+
+    # MODIFIED: Fetch metadata once and pass it to child functions.
+    metadata = vpu.get_video_metadata(video_path)
 
     def toggle_crop_editor_overlay_visibility(e=None):
         dialog_state.overlay_is_visible = not dialog_state.overlay_is_visible
@@ -509,11 +521,13 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
         if page: page.update()
     dialog_state.active_toggle_crop_visibility_func = toggle_crop_editor_overlay_visibility
 
-    nav_controls = build_navigation_controls(lambda e: switch_video_in_dialog(page, -1), lambda e: switch_video_in_dialog(page, 1))
-    video_player_stack, actual_video_player = build_video_player(video_path, autoplay=AUTO_PLAYBACK)
+    nav_controls = build_navigation_controls(page)
+    
+    # MODIFIED: Pass metadata to build_video_player
+    video_player_stack, actual_video_player = build_video_player(video_path, autoplay=AUTO_PLAYBACK, metadata=metadata)
     dialog_state.active_video_player_instance = actual_video_player
+    dialog_state.active_video_player_stack_instance = video_player_stack
 
-    metadata = vpu.get_video_metadata(video_path)
     dialog_state.playback_start_frame = 0
     dialog_state.playback_end_frame = metadata.get('total_frames', -1) if metadata else -1
     dialog_state.reframed_playback = True
@@ -531,7 +545,7 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
     on_crop_all_act = lambda e: page.run_thread(
         video_editor.handle_crop_all_videos,
         page, 
-        dialog_state.current_video_path_for_dialog, # Added
+        dialog_state.current_video_path_for_dialog,
         dialog_state.active_width_field_instance, 
         dialog_state.active_height_field_instance,
         dialog_state.current_video_list_for_dialog, 
@@ -546,20 +560,20 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
         page, dialog_state.current_video_path_for_dialog,
         dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback
     )
-    on_clean_overlay_apply_act = lambda e: page.run_thread( # NEW LAMBDA
-        video_editor.on_clean_action_handler, # Call from video_editor
-        page, # Pass page
+    on_clean_overlay_apply_act = lambda e: page.run_thread(
+        video_editor.on_clean_action_handler,
+        page,
         dialog_state.current_video_path_for_dialog,
         (int(dialog_state.overlay_control_instance.left or 0),
          int(dialog_state.overlay_control_instance.top or 0),
          int(dialog_state.overlay_control_instance.width or 0),
          int(dialog_state.overlay_control_instance.height or 0)),
-        dialog_state.current_video_list_for_dialog, # Pass video_list
-        dialog_state.active_on_caption_updated_callback # Pass on_caption_updated_callback
+        dialog_state.current_video_list_for_dialog,
+        dialog_state.active_on_caption_updated_callback
     )
     on_flip_act = lambda e: page.run_thread(video_editor.on_flip_horizontal, page, dialog_state.current_video_path_for_dialog, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
     on_rev_act = lambda e: page.run_thread(video_editor.on_reverse, page, dialog_state.current_video_path_for_dialog, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
-    on_remap_act = lambda speed_val: page.run_thread(video_editor.on_time_remap, page, dialog_state.current_video_path_for_video, speed_val, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
+    on_remap_act = lambda speed_val: page.run_thread(video_editor.on_time_remap, page, dialog_state.current_video_path_for_dialog, speed_val, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
     on_cut_act = lambda start_f, end_f: page.run_thread(video_editor.cut_to_frames, page, dialog_state.current_video_path_for_dialog, start_f, end_f, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
     on_split_act = lambda split_f: page.run_thread(video_editor.split_to_video, page, dialog_state.current_video_path_for_dialog, split_f, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback, dialog_state.active_video_player_instance)
     on_rotate_90_act = lambda direction: page.run_thread(video_editor.on_rotate_90_video_action, page, dialog_state.current_video_path_for_dialog, direction, dialog_state.current_video_list_for_dialog, dialog_state.active_on_caption_updated_callback)
@@ -571,7 +585,7 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
         on_crop_all_action=on_crop_all_act,
         on_get_closest_action=on_get_closest_act,
         on_crop_editor_overlay_action=on_crop_overlay_apply_act,
-        on_clean_editor_overlay_action=on_clean_overlay_apply_act, # PASS NEW LAMBDA
+        on_clean_editor_overlay_action=on_clean_overlay_apply_act,
         on_toggle_crop_editor_visibility=toggle_crop_editor_overlay_visibility,
         on_flip_horizontal_action=on_flip_act,
         on_reverse_action=on_rev_act,
@@ -581,7 +595,8 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
         on_rotate_90_video_action=on_rotate_90_act,
         on_cut_all_videos_to_max_action=on_cut_all_max_act,
         video_list=video_list,
-        on_caption_updated_callback=on_caption_updated_callback)
+        on_caption_updated_callback=on_caption_updated_callback,
+        metadata=metadata) # MODIFIED: Pass metadata
     dialog_state.active_message_container_instance = build_message_container(content=message_ui_element)
 
     content_column = ft.Column(
@@ -593,14 +608,16 @@ def create_video_player_with_captions_content(page: ft.Page, video_path: str, vi
         ],
         spacing=10, tight=True, scroll=ft.ScrollMode.ADAPTIVE
     )
+    dialog_state.active_main_content_column_instance = content_column
     return content_column, nav_controls
 
 def open_video_captions_dialog(page: ft.Page, video_path: str, video_list: Optional[List[str]]=None, on_caption_updated_callback: Optional[Callable] = None):
     if not video_path: return
     if video_list is None: video_list = [video_path]
     dialog_state.dialog_is_open = True
-    dialog_state.overlay_is_visible = False # Initialize overlay visibility
+    dialog_state.overlay_is_visible = False
     main_content_ui, nav_prefix_controls = create_video_player_with_captions_content(page, video_path, video_list, on_caption_updated_callback)
+    dialog_state.active_main_content_column_instance = main_content_ui
 
     dialog_title_text = os.path.basename(video_path)
     desired_width = VIDEO_PLAYER_DIALOG_WIDTH
@@ -692,9 +709,11 @@ def handle_dialog_dismiss(page: ft.Page):
         dialog_state.current_video_list_for_dialog = None
         dialog_state.active_on_caption_updated_callback = None
         dialog_state.active_video_player_instance = None
+        dialog_state.active_video_player_stack_instance = None
+        dialog_state.active_main_content_column_instance = None
         dialog_state.page = None
-        dialog_state.video_path = None # Assuming video_path exists in dialog_state
-        dialog_state.video_list = None # Assuming video_list exists in dialog_state
+        dialog_state.video_path = None
+        dialog_state.video_list = None
         dialog_state.on_caption_updated_callback = None
         dialog_state.active_toggle_crop_visibility_func = None
         dialog_state.overlay_is_visible = False
@@ -726,15 +745,16 @@ def handle_dialog_dismiss(page: ft.Page):
         dialog_state.total_frames_text_instance = None
         dialog_state.frame_range_slider_instance = None
         dialog_state.video_feedback_timer = None
-        dialog_state.video_is_playing = [False] # Reset to initial state
+        dialog_state.video_is_playing = [False]
         
-        # Close dialog if still open - simplified logic
         if hasattr(page, 'dialog') and page.dialog:
             page.dialog.open = False
-        
-        # Single page update at the end
-        try:
             page.update()
+            page.dialog = None
+        
+        try:
+            if page.page:
+                page.update()
         except Exception as update_error:
             print(f"Error updating page: {update_error}")
             
