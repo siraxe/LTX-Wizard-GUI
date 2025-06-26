@@ -4,6 +4,7 @@ import base64 # Added import for base64
 import os
 import json
 import subprocess
+import threading
 from ui._styles import create_textfield, create_styled_button, IMAGE_PLAYER_DIALOG_WIDTH, IMAGE_PLAYER_DIALOG_HEIGHT, BTN_STYLE2
 from ui.flet_hotkeys import AUTO_PLAYBACK, NEXT_KEY, PREV_KEY
 from typing import Optional, List, Callable, Tuple
@@ -24,6 +25,9 @@ def _caption_field_on_focus(e: ft.ControlEvent):
 def _caption_field_on_blur(e: ft.ControlEvent):
     image_dialog_state.caption_field_is_focused = False
 
+def _debounced_save_caption(page: ft.Page, image_path: str, new_caption: str, on_caption_updated_callback: Optional[Callable], field_name: str):
+    save_caption_with_ui_feedback(page, image_path, new_caption, on_caption_updated_callback, field_name)
+
 def build_caption_field(initial_value: str = "") -> ft.TextField:
     tf = create_textfield(
         label="Image Caption", value=initial_value,
@@ -33,6 +37,13 @@ def build_caption_field(initial_value: str = "") -> ft.TextField:
     )
     tf.on_focus = _caption_field_on_focus
     tf.on_blur = _caption_field_on_blur
+    tf.on_change = lambda e: (
+        image_dialog_state.caption_save_timer.cancel() if image_dialog_state.caption_save_timer else None,
+        setattr(image_dialog_state, 'caption_save_timer', threading.Timer(0.5, lambda: _debounced_save_caption(
+            e.page, image_dialog_state.image_path, e.control.value.strip(), image_dialog_state.active_on_caption_updated_callback, 'caption'
+        ))),
+        image_dialog_state.caption_save_timer.start()
+    )
     return tf
 
 def build_caption_neg_field(initial_value: str = "") -> ft.TextField:
@@ -44,6 +55,13 @@ def build_caption_neg_field(initial_value: str = "") -> ft.TextField:
     )
     tf.on_focus = _caption_field_on_focus
     tf.on_blur = _caption_field_on_blur
+    tf.on_change = lambda e: (
+        image_dialog_state.neg_caption_save_timer.cancel() if image_dialog_state.neg_caption_save_timer else None,
+        setattr(image_dialog_state, 'neg_caption_save_timer', threading.Timer(0.5, lambda: _debounced_save_caption(
+            e.page, image_dialog_state.image_path, e.control.value.strip(), image_dialog_state.active_on_caption_updated_callback, 'negative_caption'
+        ))),
+        image_dialog_state.neg_caption_save_timer.start()
+    )
     return tf
 
 def build_message_container(content: Optional[ft.Control] = None) -> ft.Container:
@@ -337,24 +355,6 @@ def switch_image_in_dialog(page: ft.Page, new_image_offset: int):
         page: The Flet page instance
         new_image_offset: The offset to move in the image list (1 for next, -1 for previous)
     """
-    # Save current captions if fields exist
-    if hasattr(image_dialog_state, 'active_caption_field_instance') and image_dialog_state.active_caption_field_instance:
-        save_caption_with_ui_feedback(
-            page, 
-            image_dialog_state.image_path, 
-            image_dialog_state.active_caption_field_instance.value.strip(), 
-            None, 
-            'caption'
-        )
-    
-    if hasattr(image_dialog_state, 'active_caption_neg_field_instance') and image_dialog_state.active_caption_neg_field_instance:
-        save_caption_with_ui_feedback(
-            page, 
-            image_dialog_state.image_path, 
-            image_dialog_state.active_caption_neg_field_instance.value.strip(), 
-            None, 
-            'negative_caption'
-        )
     
     # Get the new image path
     if not hasattr(image_dialog_state, 'image_list') or not image_dialog_state.image_list:
@@ -636,6 +636,8 @@ def open_image_captions_dialog(page: ft.Page, image_path: str, image_list: Optio
     image_dialog_state.on_caption_updated_callback = on_caption_updated_callback
     image_dialog_state.overlay_is_visible = False
     image_dialog_state.c_key_scaling_active = False # Initialize c_key_scaling_active
+    image_dialog_state.caption_save_timer = None
+    image_dialog_state.neg_caption_save_timer = None
     
     # Load captions if available
     caption_text, neg_caption_text, message = ipu.load_caption_for_image(image_path)
@@ -720,41 +722,12 @@ def handle_dialog_dismiss(page: ft.Page):
     Optimized for better performance.
     """
     try:
-        captions_saved = False # Initialize captions_saved
-        
         # Temporarily disable the caption updated callback to prevent thumbnail refresh on dismiss
         # The user requested to disable thumbnail refresh when the player dialog is closed.
         # This callback is responsible for triggering thumbnail updates.
         original_on_caption_updated_callback = image_dialog_state.active_on_caption_updated_callback
         image_dialog_state.active_on_caption_updated_callback = None
 
-        # Save any unsaved captions if they've been modified
-        if hasattr(image_dialog_state, 'image_path') and image_dialog_state.image_path:
-            # Only save if there are unsaved changes
-            if (hasattr(image_dialog_state, 'active_caption_field_instance') and 
-                image_dialog_state.active_caption_field_instance and 
-                getattr(image_dialog_state.active_caption_field_instance, 'dirty', True)):
-                success = save_caption_with_ui_feedback( # Initialize success here
-                    page, 
-                    image_dialog_state.image_path, 
-                    image_dialog_state.active_caption_field_instance.value.strip() if image_dialog_state.active_caption_field_instance.value else "", 
-                    image_dialog_state.active_on_caption_updated_callback, # Pass the callback (now None)
-                    'caption'
-                )
-                if success: captions_saved = True
-            
-            if (hasattr(image_dialog_state, 'active_caption_neg_field_instance') and 
-                image_dialog_state.active_caption_neg_field_instance and 
-                getattr(image_dialog_state.active_caption_neg_field_instance, 'dirty', True)):
-                success = save_caption_with_ui_feedback(
-                    page, 
-                    image_dialog_state.image_path, 
-                    image_dialog_state.active_caption_neg_field_instance.value.strip() if image_dialog_state.active_caption_neg_field_instance.value else "", 
-                    image_dialog_state.active_on_caption_updated_callback, # Pass the callback (now None)
-                    'negative_caption'
-                )
-                if success: captions_saved = True
-        
         # Restore the original callback if it existed
         image_dialog_state.active_on_caption_updated_callback = original_on_caption_updated_callback
 

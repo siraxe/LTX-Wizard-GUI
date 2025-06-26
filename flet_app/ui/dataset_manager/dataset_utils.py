@@ -124,26 +124,26 @@ def load_processed_map(dataset_name: str) -> dict | None:
     return None
 
 def load_dataset_captions(dataset_name: str) -> list:
-    base_dir, _ = _get_dataset_base_dir(dataset_name) # Unpack the tuple
-    dataset_captions_json_path = os.path.join(base_dir, dataset_name.replace('(img) ', '').replace(' (img)', ''), "captions.json")
-    if os.path.exists(dataset_captions_json_path):
-        try:
-            with open(dataset_captions_json_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
-
-def delete_captions_file(dataset_name: str) -> bool:
-    base_dir, _ = _get_dataset_base_dir(dataset_name) # Unpack the tuple
-    captions_file_path = os.path.join(base_dir, dataset_name.replace('(img) ', '').replace(' (img)', ''), "captions.json")
-    if os.path.exists(captions_file_path):
-        try:
-            os.remove(captions_file_path)
-            return True
-        except Exception:
-            return False
-    return False
+    base_dir, dataset_type = _get_dataset_base_dir(dataset_name)
+    dataset_folder_path = os.path.join(base_dir, dataset_name.replace('(img) ', '').replace(' (img)', ''))
+    media_files = get_media_files(dataset_folder_path, dataset_type)
+    
+    captions_data = []
+    for media_path in media_files:
+        base_filename, _ = os.path.splitext(os.path.basename(media_path))
+        txt_caption_path = os.path.join(dataset_folder_path, f"{base_filename}.txt")
+        
+        caption_text = ""
+        if os.path.exists(txt_caption_path):
+            with open(txt_caption_path, 'r', encoding='utf-8') as f:
+                caption_text = f.read().strip()
+        
+        captions_data.append({
+            "media_path": os.path.basename(media_path),
+            "caption": caption_text
+        })
+        
+    return captions_data
 
 def validate_bucket_values(W_val, H_val, F_val) -> list[str]:
     errors = []

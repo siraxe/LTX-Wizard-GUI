@@ -15,7 +15,7 @@ from settings import settings
 from ui_popups.delete_caption_dialog import show_delete_caption_dialog
 from ui.dataset_manager.dataset_utils import (
     load_dataset_config, save_dataset_config, load_processed_map,
-    load_dataset_captions, delete_captions_file, validate_bucket_values,
+    load_dataset_captions, validate_bucket_values,
     _get_dataset_base_dir, get_videos_and_thumbnails, get_dataset_folders, get_media_files,
     parse_bucket_string_to_list # Add this import
 )
@@ -442,55 +442,7 @@ async def on_rename_files_click(e: ft.ControlEvent, selected_dataset_ref, DATASE
             e.page.update()
         return
 
-    # --- Validate and clean up captions.json before renaming ---
-    captions_path = os.path.join(source_dir, "captions.json")
-    captions_data = []
-    if os.path.exists(captions_path):
-        try:
-            with open(captions_path, "r", encoding="utf-8") as f:
-                captions_data = json.load(f)
-
-            initial_caption_count = len(captions_data)
-            cleaned_captions_data = []
-            removed_entries_count = 0
-
-            for entry in captions_data:
-                # Check if the entry is a dictionary and has a 'media_path' key
-                if isinstance(entry, dict) and "media_path" in entry:
-                    media_path_value = entry.get("media_path")
-                    # Check if the media_path value exists as a file in the dataset folder
-                    if media_path_value and os.path.exists(os.path.join(source_dir, media_path_value)):
-                        cleaned_captions_data.append(entry)
-                    else:
-                        # Log a warning and increment removed count
-                        print(f"Warning: Removing caption entry with invalid media_path: {media_path_value}")
-                        removed_entries_count += 1
-                else:
-                    # Log a warning for invalid entry format
-                    print(f"Warning: Removing invalid caption entry format: {entry}")
-                    removed_entries_count += 1
-
-            if removed_entries_count > 0:
-                # Save the cleaned data back to captions.json
-                with open(captions_path, "w", encoding="utf-8") as f:
-                    json.dump(cleaned_captions_data, f, indent=2, ensure_ascii=False)
-                if e.page:
-                     e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Cleaned up captions.json: Removed {removed_entries_count} invalid entr(y/ies)."), open=True)
-                     e.page.update()
-                captions_data = cleaned_captions_data # Update captions_data to the cleaned version for renaming
-
-        except Exception as ex:
-            if e.page:
-                e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error validating/cleaning captions.json: {ex}"), open=True)
-                e.page.update()
-            # Continue with potentially problematic captions_data, but warn the user
-            print(f"Error validating/cleaning captions.json: {ex}")
-            # If loading failed, initialize captions_data as empty to prevent further errors
-            if 'captions_data' not in locals() or captions_data is None:
-                 captions_data = []
-    else:
-         captions_data = [] # Initialize as empty list if captions.json doesn't exist
-    # -------------------------------------------------------------
+    
 
     # Prepare new names and check for collisions
     new_names = []
@@ -547,39 +499,7 @@ async def on_rename_files_click(e: ft.ControlEvent, selected_dataset_ref, DATASE
             # Decide whether to stop or continue. Stopping is safer to avoid partial renames.
             return # Stop if any rename fails
 
-    # Update captions.json if exists (using the potentially cleaned data)
-    if captions_data: # Only proceed if captions_data is not empty after cleanup
-        try:
-            changed = False
-            # Update filename fields in-place (never duplicate entries)
-            for entry in captions_data:
-                # Check if the entry is a dictionary before accessing keys
-                if isinstance(entry, dict):
-                    for field in ("media_path", "video"): # Check relevant fields
-                        if field in entry and entry[field] in old_to_new:
-                            entry[field] = old_to_new[entry[field]]
-                            changed = True
-
-            # --- Sort captions_data by the new media_path ---
-            # Ensure all entries have a 'media_path' before sorting
-            sortable_entries = [entry for entry in captions_data if isinstance(entry, dict) and "media_path" in entry]
-            non_sortable_entries = [entry for entry in captions_data if not (isinstance(entry, dict) and "media_path" in entry)]
-
-            # Sort the sortable entries
-            sortable_entries.sort(key=lambda x: x.get("media_path", ""))
-
-            # Combine sorted sortable entries and non-sortable entries (though non-sortable should be removed by cleanup)
-            captions_data = sortable_entries + non_sortable_entries
-            # ---------------------------------------------
-            if changed or removed_entries_count > 0: # Save if renamed paths or if entries were removed during cleanup
-                 with open(captions_path, "w", encoding="utf-8") as f:
-                    json.dump(captions_data, f, indent=2, ensure_ascii=False)
-
-        except Exception as ex:
-            if e.page:
-                e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Failed to update/sort captions.json after renaming: {ex}"), open=True)
-                e.page.update()
-            # Continue as file renaming was successful, but notify user
+    
 
     # Update info.json if exists (rename keys, preserve values, never duplicate)
     info_path = os.path.join(source_dir, "info.json")
@@ -795,8 +715,65 @@ async def on_add_captions_click_with_model(e: ft.ControlEvent,
             set_bottom_app_bar_height_func,
             delete_button_ref=dataset_delete_captions_button_control,
             thumbnails_grid_control=thumbnails_grid_control,
-            on_success_callback=lambda: update_thumbnails_func(page_ctx=e.page, grid_control=thumbnails_grid_control, force_refresh=True) # Force refresh after captioning
+            on_success_callback=lambda: e.page.run_task(on_caption_to_txt_click, e, selected_dataset_ref, DATASETS_TYPE_ref) # Convert captions.json to .txt files
         )
+
+def on_delete_captions_click(e: ft.ControlEvent, thumbnails_grid_control: ft.GridView, selected_dataset_ref, processed_progress_bar_ref, processed_output_field_ref, set_bottom_app_bar_height_func, update_thumbnails_func):
+    page_for_dialog = e.page
+    button_control = e.control
+    current_dataset_name = selected_dataset_ref.get("value")
+
+    if not current_dataset_name:
+        if page_for_dialog:
+            page_for_dialog.snack_bar = ft.SnackBar(content=ft.Text("No dataset selected."), open=True)
+            page_for_dialog.update()
+        return
+
+    # Disable button while dialog is open
+    if button_control:
+        button_control.disabled = True
+    if page_for_dialog:
+        page_for_dialog.update()
+
+    try:
+        # Show confirmation dialog before deleting
+        show_delete_caption_dialog(
+            page_for_dialog,
+            current_dataset_name,
+            lambda: perform_delete_captions(page_for_dialog, thumbnails_grid_control, selected_dataset_ref, processed_progress_bar_ref, processed_output_field_ref, set_bottom_app_bar_height_func, update_thumbnails_func)
+        )
+    finally:
+        # Re-enable button after dialog is closed
+        if button_control:
+             # Only re-enable if a dataset is still selected
+            button_control.disabled = not selected_dataset_ref.get("value")
+        if page_for_dialog:
+            page_for_dialog.update()
+
+def perform_delete_captions(page_context: ft.Page, thumbnails_grid_control: ft.GridView, selected_dataset_ref, processed_progress_bar_ref, processed_output_field_ref, set_bottom_app_bar_height_func, update_thumbnails_func):
+    current_dataset_name = selected_dataset_ref.get("value")
+    if not current_dataset_name:
+        return
+
+    base_dir, dataset_type = _get_dataset_base_dir(current_dataset_name)
+    dataset_folder_path = os.path.join(base_dir, current_dataset_name.replace('(img) ', '').replace(' (img)', ''))
+    media_files = get_media_files(dataset_folder_path, dataset_type)
+    
+    deleted_count = 0
+    for media_path in media_files:
+        base_filename, _ = os.path.splitext(os.path.basename(media_path))
+        txt_caption_path = os.path.join(dataset_folder_path, f"{base_filename}.txt")
+        if os.path.exists(txt_caption_path):
+            try:
+                os.remove(txt_caption_path)
+                deleted_count += 1
+            except Exception as e:
+                print(f"Error deleting caption file {txt_caption_path}: {e}")
+
+    if page_context:
+        page_context.snack_bar = ft.SnackBar(content=ft.Text(f"Deleted {deleted_count} caption file(s) for {current_dataset_name}."), open=True)
+    update_thumbnails_func(page_ctx=page_context, grid_control=thumbnails_grid_control, force_refresh=True) # Force refresh after deleting captions
+
 
 def stop_captioning(e: ft.ControlEvent,
                     add_button: ft.ElevatedButton,
@@ -879,60 +856,7 @@ def stop_captioning(e: ft.ControlEvent,
         e.page.update()
 
 
-def on_delete_captions_click(e: ft.ControlEvent, thumbnails_grid_control: ft.GridView, selected_dataset_ref, processed_progress_bar_ref, processed_output_field_ref, set_bottom_app_bar_height_func, update_thumbnails_func):
-    page_for_dialog = e.page
-    button_control = e.control
-    current_dataset_name = selected_dataset_ref.get("value")
 
-    if not current_dataset_name:
-        if page_for_dialog:
-            page_for_dialog.snack_bar = ft.SnackBar(content=ft.Text("No dataset selected."), open=True)
-            page_for_dialog.update()
-        return
-
-    base_dir, _ = _get_dataset_base_dir(current_dataset_name)
-    captions_file_path = os.path.join(base_dir, current_dataset_name.replace('(img) ', '').replace(' (img)', ''), "captions.json")
-    if not os.path.exists(captions_file_path):
-        if page_for_dialog:
-            page_for_dialog.snack_bar = ft.SnackBar(content=ft.Text(f"Captions for '{current_dataset_name}' not found."), open=True)
-            page_for_dialog.update()
-        return
-
-    # Disable button while dialog is open
-    if button_control:
-        button_control.disabled = True
-    if page_for_dialog:
-        page_for_dialog.update()
-
-    try:
-        # Show confirmation dialog before deleting
-        show_delete_caption_dialog(
-            page_for_dialog,
-            current_dataset_name,
-            lambda: perform_delete_captions(page_for_dialog, thumbnails_grid_control, selected_dataset_ref, processed_progress_bar_ref, processed_output_field_ref, set_bottom_app_bar_height_func, update_thumbnails_func)
-        )
-    finally:
-        # Re-enable button after dialog is closed
-        if button_control:
-             # Only re-enable if a dataset is still selected
-            button_control.disabled = not selected_dataset_ref.get("value")
-        if page_for_dialog:
-            page_for_dialog.update()
-
-
-def perform_delete_captions(page_context: ft.Page, thumbnails_grid_control: ft.GridView, selected_dataset_ref, processed_progress_bar_ref, processed_output_field_ref, set_bottom_app_bar_height_func, update_thumbnails_func):
-    current_dataset_name = selected_dataset_ref.get("value")
-    if not current_dataset_name:
-        return
-
-    if delete_captions_file(current_dataset_name):
-        if page_context:
-            page_context.snack_bar = ft.SnackBar(content=ft.Text(f"Deleted captions for {current_dataset_name}."), open=True)
-        update_thumbnails_func(page_ctx=page_context, grid_control=thumbnails_grid_control, force_refresh=True) # Force refresh after deleting captions
-    else:
-        if page_context:
-            page_context.snack_bar = ft.SnackBar(content=ft.Text(f"Error deleting captions for {current_dataset_name}."), open=True)
-            page_context.update()
 
 
 async def on_preprocess_dataset_click(e: ft.ControlEvent,
@@ -946,6 +870,7 @@ async def on_preprocess_dataset_click(e: ft.ControlEvent,
                                 set_bottom_app_bar_height_func,
                                 update_thumbnails_func,
                                 thumbnails_grid_control: ft.GridView): # Add this argument
+    await on_caption_to_json_click(e, selected_dataset_ref, DATASETS_TYPE_ref, update_thumbnails_func, thumbnails_grid_control)
     current_dataset_name = selected_dataset_ref.get("value")
     if not current_dataset_name:
         if e.page:
@@ -1175,143 +1100,56 @@ async def apply_affix_from_textfield(e: ft.ControlEvent, affix_type: str, select
     else:
         dataset_dir = settings.DATASETS_DIR
         
-    captions_json_path = os.path.join(dataset_dir, clean_dataset_name, "captions.json")
-
-    if not os.path.exists(captions_json_path):
-        # Create an empty captions.json file if it doesn't exist
-        try:
-            with open(captions_json_path, 'w', encoding='utf-8') as f:
-                json.dump([], f, indent=4)
-            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Created empty captions.json for dataset '{current_dataset_name}'."), open=True)
-            if e.page: e.page.update()
-            captions_data = [] # Initialize captions_data as empty list
-        except Exception as ex:
-            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error creating captions.json: {ex}"), open=True)
-            if e.page: e.page.update()
-            return # Exit if file creation fails
-
-    try:
-        with open(captions_json_path, 'r', encoding='utf-8') as f:
-            captions_data = json.load(f)
-    except json.JSONDecodeError:
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error reading captions.json for '{current_dataset_name}'. Invalid JSON."), open=True)
-        if e.page: e.page.update()
-        return
-    except Exception as ex:
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error reading captions.json: {ex}"), open=True)
-        if e.page: e.page.update()
-        return
-
-    if not isinstance(captions_data, list):
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Captions data for '{current_dataset_name}' is not a list."), open=True)
-        if e.page: e.page.update()
-        return
-
-    # --- NEW LOGIC: Check for missing videos/images and add them to captions.json ---
     dataset_folder_path = os.path.join(dataset_dir, clean_dataset_name)
-    
-    # Get actual media files in the dataset folder
-    # get_videos_and_thumbnails returns (video_paths, thumbnail_paths)
-    # We only need the video_paths (or image_paths)
-    all_media_paths_in_folder = get_media_files(dataset_folder_path, DATASETS_TYPE_ref["value"])
-    
-    # Extract base filenames from existing captions_data
-    existing_captioned_basenames = {os.path.basename(item["media_path"]) for item in captions_data if isinstance(item, dict) and "media_path" in item}
-    
-    new_entries_added = False
-    for media_full_path in all_media_paths_in_folder:
-        media_basename = os.path.basename(media_full_path)
-        if media_basename not in existing_captioned_basenames:
-            # Add new entry for the missing video/image
-            captions_data.append({
-                "media_path": media_basename,
-                "caption": "" # Default empty caption
-            })
-            new_entries_added = True
-            print(f"Added missing media to captions.json: {media_basename}") # For debugging
-
-    if new_entries_added:
-        # Sort the captions_data by media_path after adding new entries
-        captions_data.sort(key=lambda x: x.get("media_path", ""))
-        try:
-            with open(captions_json_path, 'w', encoding='utf-8') as f:
-                json.dump(captions_data, f, indent=4)
-            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Updated captions.json with new media entries."), open=True)
-            if e.page: e.page.update()
-        except Exception as ex:
-            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error saving updated captions.json: {ex}"), open=True)
-            if e.page: e.page.update()
-    # --- END NEW LOGIC ---
 
     selected_files_from_thumbnails = _get_selected_filenames(thumbnails_grid_ref_obj.current)
     
-    captions_to_process = []
+    media_files_to_process = []
     if selected_files_from_thumbnails:
-        # Filter captions_data to only include entries for selected files
-        for item in captions_data:
-            if isinstance(item, dict) and "media_path" in item and \
-               os.path.basename(item["media_path"]) in selected_files_from_thumbnails:
-                captions_to_process.append(item)
-        if not captions_to_process:
-            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"No selected files have captions to modify."), open=True)
-            if e.page: e.page.update()
-            return
+        all_media_files = get_media_files(dataset_folder_path, DATASETS_TYPE_ref["value"])
+        for media_file in all_media_files:
+            if os.path.basename(media_file) in selected_files_from_thumbnails:
+                media_files_to_process.append(media_file)
     else:
-        # If no thumbnails selected, process all captions
-        captions_to_process = captions_data
-        if not captions_to_process:
-            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Captions.json is empty. No captions to modify."), open=True)
-            if e.page: e.page.update()
-            return
+        media_files_to_process = get_media_files(dataset_folder_path, DATASETS_TYPE_ref["value"])
 
-    modified_count = 0
-    for item in captions_to_process:
-        if isinstance(item, dict) and "caption" in item and isinstance(item["caption"], str):
-            if affix_type == "prefix":
-                item["caption"] = f"{affix_text} {item['caption']}"
-            elif affix_type == "suffix":
-                item["caption"] = f"{item['caption']} {affix_text}"
-            modified_count += 1
-    
-    if modified_count == 0: # This check is now for captions_to_process
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"No captions were modified. Check format."), open=True)
+    if not media_files_to_process:
+        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"No media files to process."), open=True)
         if e.page: e.page.update()
         return
-    
-    # If selected_files_from_thumbnails was used, we need to merge back the modified captions
-    if selected_files_from_thumbnails:
-        updated_captions_data = []
-        processed_media_paths = {os.path.basename(item["media_path"]) for item in captions_to_process if "media_path" in item}
-        for original_item in captions_data:
-            if isinstance(original_item, dict) and "media_path" in original_item and \
-               os.path.basename(original_item["media_path"]) in processed_media_paths:
-                # Find the modified version of this item from captions_to_process
-                found_modified = False
-                for modified_item in captions_to_process:
-                    if os.path.basename(modified_item.get("media_path")) == os.path.basename(original_item.get("media_path")):
-                        updated_captions_data.append(modified_item)
-                        found_modified = True
-                        break
-                if not found_modified: # Should not happen if logic is correct
-                    updated_captions_data.append(original_item)
-            else:
-                updated_captions_data.append(original_item)
-        captions_data = updated_captions_data
 
+    modified_count = 0
     try:
-        with open(captions_json_path, 'w', encoding='utf-8') as f:
-            json.dump(captions_data, f, indent=4)
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Successfully {affix_type}ed to {modified_count} captions."), open=True)
-        if affix_text_field_ref.current:
-            affix_text_field_ref.current.value = ""
-        
-        if asyncio.iscoroutinefunction(update_thumbnails_func):
-            await update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=False)
-        else:
-            update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=False)
+        for media_path in media_files_to_process:
+            base_filename, _ = os.path.splitext(os.path.basename(media_path))
+            txt_caption_path = os.path.join(dataset_folder_path, f"{base_filename}.txt")
             
+            caption_text = ""
+            if os.path.exists(txt_caption_path):
+                with open(txt_caption_path, 'r', encoding='utf-8') as f:
+                    caption_text = f.read().strip()
+
+            if affix_type == "prefix":
+                new_caption = f"{affix_text} {caption_text}"
+            elif affix_type == "suffix":
+                new_caption = f"{caption_text} {affix_text}"
+            
+            with open(txt_caption_path, 'w', encoding='utf-8') as f:
+                f.write(new_caption)
+            modified_count += 1
+        
+        if modified_count > 0:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Successfully {affix_type}ed to {modified_count} captions."), open=True)
+            if affix_text_field_ref.current:
+                affix_text_field_ref.current.value = ""
+            
+            if asyncio.iscoroutinefunction(update_thumbnails_func):
+                await update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=False)
+            else:
+                update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=False)
+                
     except Exception as ex:
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error saving captions: {ex}"), open=True)
+        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error applying affix: {ex}"), open=True)
     finally:
         if e.page: e.page.update()
 
@@ -1338,99 +1176,56 @@ async def find_and_replace_in_captions(e: ft.ControlEvent, selected_dataset_ref,
     else:
         dataset_dir = settings.DATASETS_DIR
         
-    captions_json_path = os.path.join(dataset_dir, clean_dataset_name, "captions.json")
-
-    if not os.path.exists(captions_json_path):
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"No captions.json found for '{current_dataset_name}'."), open=True)
-        if e.page: e.page.update()
-        return
-
-    try:
-        with open(captions_json_path, 'r', encoding='utf-8') as f:
-            captions_data = json.load(f)
-    except json.JSONDecodeError:
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error reading captions.json for '{current_dataset_name}'. Invalid JSON."), open=True)
-        if e.page: e.page.update()
-        return
-    except Exception as ex:
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error reading captions.json: {ex}"), open=True)
-        if e.page: e.page.update()
-        return
-
-    if not isinstance(captions_data, list):
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Captions data for '{current_dataset_name}' is not a list."), open=True)
-        if e.page: e.page.update()
-        return
+    dataset_folder_path = os.path.join(dataset_dir, clean_dataset_name)
 
     selected_files_from_thumbnails = _get_selected_filenames(thumbnails_grid_ref_obj.current)
     
-    captions_to_process = []
+    media_files_to_process = []
     if selected_files_from_thumbnails:
-        # Filter captions_data to only include entries for selected files
-        for item in captions_data:
-            if isinstance(item, dict) and "media_path" in item and \
-               os.path.basename(item["media_path"]) in selected_files_from_thumbnails:
-                captions_to_process.append(item)
-        if not captions_to_process:
-            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"No selected files have captions to modify."), open=True)
-            if e.page: e.page.update()
-            return
+        all_media_files = get_media_files(dataset_folder_path, DATASETS_TYPE_ref["value"])
+        for media_file in all_media_files:
+            if os.path.basename(media_file) in selected_files_from_thumbnails:
+                media_files_to_process.append(media_file)
     else:
-        # If no thumbnails selected, process all captions
-        captions_to_process = captions_data
-        if not captions_to_process:
-            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Captions.json is empty. No changes made."), open=True)
-            if e.page: e.page.update()
-            return
+        media_files_to_process = get_media_files(dataset_folder_path, DATASETS_TYPE_ref["value"])
+
+    if not media_files_to_process:
+        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"No media files to process."), open=True)
+        if e.page: e.page.update()
+        return
 
     modified_count = 0
     replacements_made = 0
-    for item in captions_to_process:
-        if isinstance(item, dict) and "caption" in item and isinstance(item["caption"], str):
-            original_caption = item["caption"]
-            item["caption"] = original_caption.replace(find_text, replace_text)
-            if original_caption != item["caption"]:
+    try:
+        for media_path in media_files_to_process:
+            base_filename, _ = os.path.splitext(os.path.basename(media_path))
+            txt_caption_path = os.path.join(dataset_folder_path, f"{base_filename}.txt")
+            
+            caption_text = ""
+            if os.path.exists(txt_caption_path):
+                with open(txt_caption_path, 'r', encoding='utf-8') as f:
+                    caption_text = f.read()
+
+            original_caption = caption_text
+            new_caption = original_caption.replace(find_text, replace_text)
+
+            if original_caption != new_caption:
+                with open(txt_caption_path, 'w', encoding='utf-8') as f:
+                    f.write(new_caption)
                 modified_count += 1
                 replacements_made += original_caption.count(find_text) if find_text else 0
-    
-    if modified_count == 0: # This check is now for captions_to_process
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Text '{find_text}' not found. No changes made."), open=True)
-        if e.page: e.page.update()
-        return
-    
-    # If selected_files_from_thumbnails was used, we need to merge back the modified captions
-    if selected_files_from_thumbnails:
-        updated_captions_data = []
-        processed_media_paths = {os.path.basename(item["media_path"]) for item in captions_to_process if "media_path" in item}
-        for original_item in captions_data:
-            if isinstance(original_item, dict) and "media_path" in original_item and \
-               os.path.basename(original_item["media_path"]) in processed_media_paths:
-                # Find the modified version of this item from captions_to_process
-                found_modified = False
-                for modified_item in captions_to_process:
-                    if os.path.basename(modified_item.get("media_path")) == os.path.basename(original_item.get("media_path")):
-                        updated_captions_data.append(modified_item)
-                        found_modified = True
-                        break
-                if not found_modified: # Should not happen if logic is correct
-                    updated_captions_data.append(original_item)
-            else:
-                updated_captions_data.append(original_item)
-        captions_data = updated_captions_data
-
-    try:
-        with open(captions_json_path, 'w', encoding='utf-8') as f:
-            json.dump(captions_data, f, indent=4)
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Made {replacements_made} replacement(s) in {modified_count} caption(s)."), open=True)
-        if find_text_field_ref.current: find_text_field_ref.current.value = ""
-        if replace_text_field_ref.current: replace_text_field_ref.current.value = ""
         
-        if asyncio.iscoroutinefunction(update_thumbnails_func):
-            await update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=False)
-        else:
-            update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=False)
+        if modified_count > 0:
+            e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Made {replacements_made} replacement(s) in {modified_count} caption(s)."), open=True)
+            if find_text_field_ref.current: find_text_field_ref.current.value = ""
+            if replace_text_field_ref.current: replace_text_field_ref.current.value = ""
             
+            if asyncio.iscoroutinefunction(update_thumbnails_func):
+                await update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=False)
+            else:
+                update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=False)
+                
     except Exception as ex:
-        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error saving captions: {ex}"), open=True)
+        e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error during find and replace: {ex}"), open=True)
     finally:
         if e.page: e.page.update()

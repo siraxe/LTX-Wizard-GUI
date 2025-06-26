@@ -1,0 +1,11 @@
+1. **Modify `flet_app/ui/dataset_manager/dataset_actions.py` and `flet_app/ui/dataset_manager/dataset_utils.py`:**
+    *   Change the functions that currently read/write to `captions.json` to instead read/write to individual `.txt` files for each image/video. The `.txt` file should have the same name as the media file, but with a `.txt` extension.
+    *   The content of the `.txt` file will be the caption.
+    *   The functions for creating, deleting, and renaming datasets should be updated to handle the new `.txt` file structure.
+
+2.  **Modify `flet_app/ui_popups/image_player_utils.py` and `flet_app/ui_popups/video_player_utils.py`:**
+    *   Update the `load_caption` and `save_caption` functions to read from and write to the corresponding `.txt` file instead of `captions.json`.
+
+3.  **Modify `flet_app/ui/dataset_manager/dataset_actions.py`:**
+    *   Locate the existing "txt > json" button functionality.
+    *   Modify the "Start Preprocess" button's `on_click` event handler to call this "txt > json" functionality before running the preprocessing script. This will generate the `captions.json` file that the script expects.

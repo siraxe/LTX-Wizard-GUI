@@ -21,75 +21,64 @@ MIN_OVERLAY_SIZE = 20 # Minimum size for the overlay during resize (used in calc
 # Caption and Data Handling
 def load_caption_for_video(video_path: str) -> Tuple[str, str, Optional[str]]:
     """
-    Load caption and negative caption for a given video from its captions.json file.
+    Load caption and negative caption for a given video from their corresponding .txt files.
     Returns: (caption, negative_caption, message_string_or_none)
     """
     video_dir = os.path.dirname(video_path)
-    dataset_json_path = os.path.join(video_dir, "captions.json")
-    video_filename = os.path.basename(video_path)
+    base_filename, _ = os.path.splitext(os.path.basename(video_path))
+    caption_txt_path = os.path.join(video_dir, f"{base_filename}.txt")
+    neg_caption_txt_path = os.path.join(video_dir, f"{base_filename}_neg.txt")
     no_caption_text = "No captions found, add it here and press Update"
     
     caption_value = ""
     negative_caption_value = ""
     message_to_display = no_caption_text
 
-    if os.path.exists(dataset_json_path):
+    if os.path.exists(caption_txt_path):
         try:
-            with open(dataset_json_path, 'r', encoding='utf-8') as f:
-                dataset_json_data = json.load(f)
-            for entry in dataset_json_data:
-                if entry.get("media_path") == video_filename:
-                    caption_value = entry.get("caption", "")
-                    negative_caption_value = entry.get("negative_caption", "")
-                    message_to_display = None  # Captions found
-                    break
+            with open(caption_txt_path, 'r', encoding='utf-8') as f:
+                caption_value = f.read().strip()
+            message_to_display = None  # Caption found
         except Exception as e:
-            print(f"Error reading captions file {dataset_json_path}: {e}")
-            message_to_display = f"Error loading captions: {e}"
+            print(f"Error reading caption file {caption_txt_path}: {e}")
+            message_to_display = f"Error loading caption: {e}"
+    
+    if os.path.exists(neg_caption_txt_path):
+        try:
+            with open(neg_caption_txt_path, 'r', encoding='utf-8') as f:
+                negative_caption_value = f.read().strip()
+            if message_to_display == no_caption_text: # Only clear if no other error/caption found
+                message_to_display = None
+        except Exception as e:
+            print(f"Error reading negative caption file {neg_caption_txt_path}: {e}")
+            message_to_display = f"Error loading negative caption: {e}"
             
     return caption_value, negative_caption_value, message_to_display
 
 def save_caption_for_video(video_path: str, new_caption: str, field_name: str = "caption") -> Tuple[bool, str]:
     """
-    Save the new caption for the given video to its captions.json file.
-    field_name can be "caption" or "negative_caption".
+    Save the new caption for the given video to its corresponding .txt file.
+    If field_name is 'negative_caption', saves to a _neg.txt file.
     Returns: (success_bool, message_string)
     """
     video_dir = os.path.dirname(video_path)
-    dataset_json_path = os.path.join(video_dir, "captions.json")
-    video_filename = os.path.basename(video_path)
-    current_dataset_json_data = []
-
-    if os.path.exists(dataset_json_path):
-        try:
-            with open(dataset_json_path, 'r', encoding='utf-8') as f:
-                current_dataset_json_data = json.load(f)
-        except Exception as ex:
-            msg = f"Error re-reading captions file before save: {ex}"
-            print(msg)
-            return False, msg
-
-    found_entry = False
-    for entry in current_dataset_json_data:
-        if entry.get("media_path") == video_filename:
-            entry[field_name] = new_caption
-            found_entry = True
-            break
+    base_filename, _ = os.path.splitext(os.path.basename(video_path))
     
-    if not found_entry:
-        new_entry = {"media_path": video_filename, "caption": "", "negative_caption": ""}
-        new_entry[field_name] = new_caption
-        current_dataset_json_data.append(new_entry)
+    if field_name == "caption":
+        caption_txt_path = os.path.join(video_dir, f"{base_filename}.txt")
+    elif field_name == "negative_caption":
+        caption_txt_path = os.path.join(video_dir, f"{base_filename}_neg.txt")
+    else:
+        return False, "Invalid field_name for saving caption."
 
     try:
-        os.makedirs(video_dir, exist_ok=True)
-        with open(dataset_json_path, 'w', encoding='utf-8') as f:
-            json.dump(current_dataset_json_data, f, indent=2, ensure_ascii=False)
+        with open(caption_txt_path, 'w', encoding='utf-8') as f:
+            f.write(new_caption)
         
         friendly_field_name = field_name.replace('_', ' ').title()
         return True, f"{friendly_field_name} updated!"
     except Exception as ex_write:
-        msg = f"Error writing captions file {dataset_json_path}: {ex_write}"
+        msg = f"Error writing caption file {caption_txt_path}: {ex_write}"
         print(msg)
         return False, f"Failed to update {friendly_field_name}: {ex_write}"
 

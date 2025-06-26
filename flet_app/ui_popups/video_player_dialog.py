@@ -26,6 +26,9 @@ def _caption_field_on_focus(e: ft.ControlEvent):
 def _caption_field_on_blur(e: ft.ControlEvent):
     dialog_state.caption_field_is_focused = False
 
+def _debounced_save_caption(page: ft.Page, video_path: str, new_caption: str, on_caption_updated_callback: Optional[Callable], field_name: str):
+    save_caption_with_ui_feedback(page, video_path, new_caption, on_caption_updated_callback, field_name)
+
 def build_caption_field(initial_value: str = "") -> ft.TextField:
     tf = create_textfield(
         label="Video Caption", value=initial_value,
@@ -35,6 +38,13 @@ def build_caption_field(initial_value: str = "") -> ft.TextField:
     )
     tf.on_focus = _caption_field_on_focus
     tf.on_blur = _caption_field_on_blur
+    tf.on_change = lambda e: (
+        dialog_state.caption_save_timer.cancel() if dialog_state.caption_save_timer else None,
+        setattr(dialog_state, 'caption_save_timer', threading.Timer(0.5, lambda: _debounced_save_caption(
+            e.page, dialog_state.current_video_path_for_dialog, e.control.value.strip(), dialog_state.active_on_caption_updated_callback, 'caption'
+        ))),
+        dialog_state.caption_save_timer.start()
+    )
     return tf
 
 def build_caption_neg_field(initial_value: str = "") -> ft.TextField:
@@ -46,6 +56,13 @@ def build_caption_neg_field(initial_value: str = "") -> ft.TextField:
     )
     tf.on_focus = _caption_field_on_focus
     tf.on_blur = _caption_field_on_blur
+    tf.on_change = lambda e: (
+        dialog_state.neg_caption_save_timer.cancel() if dialog_state.neg_caption_save_timer else None,
+        setattr(dialog_state, 'neg_caption_save_timer', threading.Timer(0.5, lambda: _debounced_save_caption(
+            e.page, dialog_state.current_video_path_for_dialog, e.control.value.strip(), dialog_state.active_on_caption_updated_callback, 'negative_caption'
+        ))),
+        dialog_state.neg_caption_save_timer.start()
+    )
     return tf
 
 def build_message_container(content: Optional[ft.Control] = None) -> ft.Container:
@@ -438,12 +455,6 @@ async def switch_video_in_dialog(page: ft.Page, new_video_offset: int):
     if not dialog_state.current_video_list_for_dialog or not dialog_state.current_video_path_for_dialog:
         return
 
-    # Save captions for the current video before switching
-    if dialog_state.active_caption_field_instance:
-        save_caption_with_ui_feedback(page, dialog_state.current_video_path_for_dialog, dialog_state.active_caption_field_instance.value.strip(), None, 'caption')
-    if dialog_state.active_caption_neg_field_instance:
-        save_caption_with_ui_feedback(page, dialog_state.current_video_path_for_dialog, dialog_state.active_caption_neg_field_instance.value.strip(), None, 'negative_caption')
-
     # Get the path for the next/previous video
     new_video_path = vpu.get_next_video_path(
         dialog_state.current_video_list_for_dialog,
@@ -660,37 +671,6 @@ def update_playback_range_and_seek_video(start_frame: int, end_frame: int):
 
 def handle_dialog_dismiss(page: ft.Page):
     try:
-        captions_saved = False # Initialize to False
-        # Save any unsaved captions if they've been modified
-        if hasattr(dialog_state, 'current_video_path_for_dialog') and dialog_state.current_video_path_for_dialog:
-            if (hasattr(dialog_state, 'active_caption_field_instance') and 
-                dialog_state.active_caption_field_instance and 
-                getattr(dialog_state.active_caption_field_instance, 'dirty', True)):
-                success, _ = vpu.save_caption_for_video(
-                    dialog_state.current_video_path_for_dialog, 
-                    dialog_state.active_caption_field_instance.value.strip() if dialog_state.active_caption_field_instance.value else "", 
-                    'caption'
-                )
-                if success: captions_saved = True
-            
-            if (hasattr(dialog_state, 'active_caption_neg_field_instance') and 
-                dialog_state.active_caption_neg_field_instance and 
-                getattr(dialog_state.active_caption_neg_field_instance, 'dirty', True)):
-                success, _ = vpu.save_caption_for_video(
-                    dialog_state.current_video_path_for_dialog, 
-                    dialog_state.active_caption_neg_field_instance.value.strip() if dialog_state.active_caption_neg_field_instance.value else "", 
-                    'negative_caption'
-                )
-                if success: captions_saved = True
-        
-        # Call the update callback if captions were saved
-        if captions_saved and dialog_state.active_on_caption_updated_callback:
-            # Ensure it's called as a coroutine if it is one
-            if asyncio.iscoroutinefunction(dialog_state.active_on_caption_updated_callback):
-                page.run_task(dialog_state.active_on_caption_updated_callback)
-            else:
-                dialog_state.active_on_caption_updated_callback()
-
         # Batch clear page attributes
         page_attrs = ['video_dialog_open', 'video_dialog_hotkey_handler']
         for attr in page_attrs:
@@ -746,6 +726,8 @@ def handle_dialog_dismiss(page: ft.Page):
         dialog_state.frame_range_slider_instance = None
         dialog_state.video_feedback_timer = None
         dialog_state.video_is_playing = [False]
+        dialog_state.caption_save_timer = None
+        dialog_state.neg_caption_save_timer = None
         
         if hasattr(page, 'dialog') and page.dialog:
             page.dialog.open = False
