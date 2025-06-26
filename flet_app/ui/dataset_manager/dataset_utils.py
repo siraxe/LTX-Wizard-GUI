@@ -295,6 +295,30 @@ def get_dataset_folders():
 
     return dataset_folders
 
+def get_media_files(dataset_path, dataset_type):
+    """
+    Gets media files for a dataset without generating thumbnails.
+    """
+    if dataset_type == "image":
+        media_extensions = settings.IMAGE_EXTENSIONS
+    else: # dataset_type == "video"
+        media_extensions = settings.VIDEO_EXTENSIONS
+
+    if not os.path.exists(dataset_path):
+        print(f"Dataset path not found: {dataset_path}") # Debugging print
+        return [] # Return empty list if dataset path doesn't exist
+
+    # List all media files with specified extensions
+    media_files = []
+    for ext in media_extensions:
+        media_files.extend(glob.glob(os.path.join(dataset_path, f"*{ext}")))
+        media_files.extend(glob.glob(os.path.join(dataset_path, f"*{ext.upper()}")))
+
+    # Ensure file paths are normalized and unique, then sort
+    media_files = sorted(list(set(os.path.normpath(f) for f in media_files)))
+    return media_files
+
+
 def get_videos_and_thumbnails(dataset_name, dataset_type):
     """
     Gets media files and generates/retrieves thumbnails for a dataset.

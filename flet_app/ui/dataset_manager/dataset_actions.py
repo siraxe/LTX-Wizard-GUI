@@ -16,7 +16,7 @@ from ui_popups.delete_caption_dialog import show_delete_caption_dialog
 from ui.dataset_manager.dataset_utils import (
     load_dataset_config, save_dataset_config, load_processed_map,
     load_dataset_captions, delete_captions_file, validate_bucket_values,
-    _get_dataset_base_dir, get_videos_and_thumbnails, get_dataset_folders,
+    _get_dataset_base_dir, get_videos_and_thumbnails, get_dataset_folders, get_media_files,
     parse_bucket_string_to_list # Add this import
 )
 from ui.dataset_manager.dataset_thumb_layout import create_thumbnail_container, set_thumbnail_selection_state
@@ -1070,7 +1070,7 @@ async def on_caption_to_json_click(e: ft.ControlEvent, selected_dataset_ref, DAT
         else:
             captions_data = []
 
-        media_files, _ = get_videos_and_thumbnails(current_dataset_name, dataset_type)
+        media_files = get_media_files(dataset_folder_path, dataset_type)
         
         captions_dict = {os.path.basename(item['media_path']): item for item in captions_data if 'media_path' in item}
 
@@ -1213,7 +1213,7 @@ async def apply_affix_from_textfield(e: ft.ControlEvent, affix_type: str, select
     # Get actual media files in the dataset folder
     # get_videos_and_thumbnails returns (video_paths, thumbnail_paths)
     # We only need the video_paths (or image_paths)
-    all_media_paths_in_folder, _ = get_videos_and_thumbnails(dataset_folder_path, DATASETS_TYPE_ref["value"])
+    all_media_paths_in_folder = get_media_files(dataset_folder_path, DATASETS_TYPE_ref["value"])
     
     # Extract base filenames from existing captions_data
     existing_captioned_basenames = {os.path.basename(item["media_path"]) for item in captions_data if isinstance(item, dict) and "media_path" in item}
@@ -1306,9 +1306,9 @@ async def apply_affix_from_textfield(e: ft.ControlEvent, affix_type: str, select
             affix_text_field_ref.current.value = ""
         
         if asyncio.iscoroutinefunction(update_thumbnails_func):
-            await update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=True)
+            await update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=False)
         else:
-            update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=True)
+            update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=False)
             
     except Exception as ex:
         e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error saving captions: {ex}"), open=True)
@@ -1426,9 +1426,9 @@ async def find_and_replace_in_captions(e: ft.ControlEvent, selected_dataset_ref,
         if replace_text_field_ref.current: replace_text_field_ref.current.value = ""
         
         if asyncio.iscoroutinefunction(update_thumbnails_func):
-            await update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=True)
+            await update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=False)
         else:
-            update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=True)
+            update_thumbnails_func(e.page, thumbnails_grid_ref_obj.current, force_refresh=False)
             
     except Exception as ex:
         e.page.snack_bar = ft.SnackBar(content=ft.Text(f"Error saving captions: {ex}"), open=True)
